@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AssistChip
@@ -123,6 +124,7 @@ fun MeDropHeaderUI(
     activeProfileType: MeDropProfileType = MeDropProfileType.CONTACT,
     onPickContactClick: () -> Unit = {},
     entranceProgress: Float = 1f,
+    showBeamingControls: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -522,115 +524,117 @@ fun MeDropHeaderUI(
                     }
                 }
 
-                when (activeShareType) {
-                    ShareTargetType.CONTACT -> {
-                        AssistChip(
-                            onClick = {},
-                            label = { Text("NFC Active • Beaming Contact", fontWeight = FontWeight.SemiBold) },
-                            leadingIcon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.rounded_share_24),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.primary
+                if (showBeamingControls) {
+                    when (activeShareType) {
+                        ShareTargetType.CONTACT -> {
+                            AssistChip(
+                                onClick = {},
+                                label = { Text("NFC Active • Beaming Contact", fontWeight = FontWeight.SemiBold) },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.rounded_share_24),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                },
+                                colors = AssistChipDefaults.assistChipColors(
+                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    labelColor = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
-                            },
-                            colors = AssistChipDefaults.assistChipColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                labelColor = MaterialTheme.colorScheme.onPrimaryContainer
                             )
-                        )
+                        }
+                        ShareTargetType.FILE -> {
+                            AssistChip(
+                                onClick = {
+                                    HapticUtil.performVirtualKeyHaptic(view)
+                                    EverDropNfcShareManager.setForceShareContact(context, safeSettings)
+                                },
+                                label = { Text("NFC: Beaming File (Tap to Beam Contact)") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.rounded_share_24),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
+                        ShareTargetType.TEXT -> {
+                            AssistChip(
+                                onClick = {
+                                    HapticUtil.performVirtualKeyHaptic(view)
+                                    EverDropNfcShareManager.setForceShareContact(context, safeSettings)
+                                },
+                                label = { Text("NFC: Beaming Text (Tap to Beam Contact)") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.rounded_edit_24),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
+                        ShareTargetType.NONE -> {
+                            AssistChip(
+                                onClick = {
+                                    HapticUtil.performVirtualKeyHaptic(view)
+                                    EverDropNfcShareManager.shareContact(context, safeSettings)
+                                },
+                                label = { Text("Set Contact as NFC Beam") },
+                                leadingIcon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.rounded_share_24),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
                     }
-                    ShareTargetType.FILE -> {
+
+                    Row(
+                        modifier = Modifier.padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         AssistChip(
                             onClick = {
                                 HapticUtil.performVirtualKeyHaptic(view)
-                                EverDropNfcShareManager.setForceShareContact(context, safeSettings)
+                                onPickContactClick()
                             },
-                            label = { Text("NFC: Beaming File (Tap to Beam Contact)") },
-                            leadingIcon = {
-                                Icon(
-                                    painter = painterResource(R.drawable.rounded_share_24),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        )
-                    }
-                    ShareTargetType.TEXT -> {
-                        AssistChip(
-                            onClick = {
-                                HapticUtil.performVirtualKeyHaptic(view)
-                                EverDropNfcShareManager.setForceShareContact(context, safeSettings)
-                            },
-                            label = { Text("NFC: Beaming Text (Tap to Beam Contact)") },
+                            label = { Text(stringResource(R.string.feat_medrop_change_contact)) },
                             leadingIcon = {
                                 Icon(
                                     painter = painterResource(R.drawable.rounded_edit_24),
                                     contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
                                 )
                             }
                         )
-                    }
-                    ShareTargetType.NONE -> {
+
                         AssistChip(
                             onClick = {
                                 HapticUtil.performVirtualKeyHaptic(view)
-                                EverDropNfcShareManager.shareContact(context, safeSettings)
+                                viewModel.setMeDropContact(context, null)
+                                EverDropNfcShareManager.clearShare()
                             },
-                            label = { Text("Set Contact as NFC Beam") },
+                            label = { Text(stringResource(R.string.feat_medrop_unchoose_contact)) },
                             leadingIcon = {
                                 Icon(
-                                    painter = painterResource(R.drawable.rounded_share_24),
+                                    painter = painterResource(R.drawable.rounded_delete_24),
                                     contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.error,
                                 )
-                            }
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                labelColor = MaterialTheme.colorScheme.error,
+                                leadingIconContentColor = MaterialTheme.colorScheme.error,
+                            ),
                         )
                     }
-                }
-
-                Row(
-                    modifier = Modifier.padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    AssistChip(
-                        onClick = {
-                            HapticUtil.performVirtualKeyHaptic(view)
-                            onPickContactClick()
-                        },
-                        label = { Text(stringResource(R.string.feat_medrop_change_contact)) },
-                        leadingIcon = {
-                            Icon(
-                                painter = painterResource(R.drawable.rounded_edit_24),
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                            )
-                        }
-                    )
-
-                    AssistChip(
-                        onClick = {
-                            HapticUtil.performVirtualKeyHaptic(view)
-                            viewModel.setMeDropContact(context, null)
-                            EverDropNfcShareManager.clearShare()
-                        },
-                        label = { Text(stringResource(R.string.feat_medrop_unchoose_contact)) },
-                        leadingIcon = {
-                            Icon(
-                                painter = painterResource(R.drawable.rounded_delete_24),
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                        },
-                        colors = AssistChipDefaults.assistChipColors(
-                            labelColor = MaterialTheme.colorScheme.error,
-                            leadingIconContentColor = MaterialTheme.colorScheme.error,
-                        ),
-                    )
                 }
 
                 if (isEditingName) {
@@ -656,6 +660,207 @@ fun MeDropHeaderUI(
                     iconRes = R.drawable.rounded_contacts_product_24,
                     onClick = onPickContactClick,
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun BeamingContactSettingsCard(
+    viewModel: MeDropViewModel,
+    onPickContactClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val settings by viewModel.meDropSettings
+    val safeSettings = settings ?: MeDropSettings()
+    val contact = safeSettings.contact
+    val activeShareType by EverDropNfcShareManager.activeShareType.collectAsState()
+
+    androidx.compose.material3.Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = androidx.compose.material3.CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceBright,
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .background(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.rounded_contacts_product_24),
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.feat_medrop_beaming_contact_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = contact?.displayName ?: stringResource(R.string.feat_medrop_no_beaming_contact),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            if (contact != null) {
+                when (activeShareType) {
+                    ShareTargetType.CONTACT -> {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("NFC Active • Beaming Contact", fontWeight = FontWeight.SemiBold) },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.rounded_share_24),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                labelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
+                        )
+                    }
+                    ShareTargetType.FILE -> {
+                        AssistChip(
+                            onClick = {
+                                HapticUtil.performVirtualKeyHaptic(view)
+                                EverDropNfcShareManager.setForceShareContact(context, safeSettings)
+                            },
+                            label = { Text("NFC: Beaming File (Tap to Beam Contact)") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.rounded_share_24),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                        )
+                    }
+                    ShareTargetType.TEXT -> {
+                        AssistChip(
+                            onClick = {
+                                HapticUtil.performVirtualKeyHaptic(view)
+                                EverDropNfcShareManager.setForceShareContact(context, safeSettings)
+                            },
+                            label = { Text("NFC: Beaming Text (Tap to Beam Contact)") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.rounded_edit_24),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                        )
+                    }
+                    ShareTargetType.NONE -> {
+                        AssistChip(
+                            onClick = {
+                                HapticUtil.performVirtualKeyHaptic(view)
+                                EverDropNfcShareManager.shareContact(context, safeSettings)
+                            },
+                            label = { Text("Set Contact as NFC Beam") },
+                            leadingIcon = {
+                                Icon(
+                                    painter = painterResource(R.drawable.rounded_share_24),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            },
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            HapticUtil.performVirtualKeyHaptic(view)
+                            onPickContactClick()
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.rounded_edit_24),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.feat_medrop_change_contact))
+                    }
+
+                    androidx.compose.material3.FilledTonalButton(
+                        onClick = {
+                            HapticUtil.performVirtualKeyHaptic(view)
+                            viewModel.setMeDropContact(context, null)
+                            EverDropNfcShareManager.clearShare()
+                        },
+                        colors = androidx.compose.material3.ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                        modifier = Modifier.weight(1f),
+                        shape = MaterialTheme.shapes.large,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.rounded_delete_24),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.feat_medrop_unchoose_contact))
+                    }
+                }
+            } else {
+                androidx.compose.material3.FilledTonalButton(
+                    onClick = {
+                        HapticUtil.performVirtualKeyHaptic(view)
+                        onPickContactClick()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.rounded_add_24),
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.feat_medrop_select_contact))
+                }
             }
         }
     }

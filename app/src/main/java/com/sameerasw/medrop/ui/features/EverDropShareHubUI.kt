@@ -68,15 +68,19 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.sameerasw.medrop.utils.EverDropFileManager
 import com.sameerasw.medrop.viewmodels.MeDropViewModel
+import com.sameerasw.medrop.domain.model.TransferType
+import com.sameerasw.medrop.ui.sheets.EverDropQuickShareSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import java.util.Locale
 
 /**
  * EverDropShareHubUI
  *
- * Provides the interactive UI for sharing files and text over NFC:
+ * Provides the interactive UI for sharing files and text over NFC and Wi-Fi Direct:
  * - Direct file picker and share sheet receiver
  * - Dynamic text input with automatic keyboard layout adjustment
  * - Live NFC beam status indicators ("NFC Active • Beaming File", "NFC Active • Beaming Text")
+ * - Wi-Fi Direct Quick Share bottom sheet integration
  * - Enforces strict beam priority: contact card is never beamed when file or text is present.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -92,6 +96,11 @@ fun EverDropShareHubUI(
 
     val activeShareType by EverDropNfcShareManager.activeShareType.collectAsState()
 
+    // Quick Share sheet state
+    val quickShareSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var showQuickShareSheet by remember { mutableStateOf(false) }
+    var quickShareType by remember { mutableStateOf(TransferType.FILE) }
+
     // Persistent share state backed by MeDropViewModel
     val shareText by viewModel.shareText
     val selectedFileUri by viewModel.selectedFileUri
@@ -106,6 +115,16 @@ fun EverDropShareHubUI(
         if (uri != null) {
             val (name, size, rawBytes) = EverDropFileManager.queryFileInfoWithRawSize(context, uri)
             val mime = context.contentResolver.getType(uri) ?: "*/*"
+            if (EverDropFileManager.isTextFile(name, mime)) {
+                val fileText = EverDropFileManager.readTextFromUri(context, uri)
+                if (fileText != null) {
+                    viewModel.clearShareFile(context)
+                    viewModel.setShareText(context, fileText)
+                    HapticUtil.performVirtualKeyHaptic(view)
+                    Toast.makeText(context, "Text loaded into text box from $name", Toast.LENGTH_SHORT).show()
+                    return@rememberLauncherForActivityResult
+                }
+            }
             viewModel.setSelectedFile(context, uri, name, size, rawBytes, mime)
             HapticUtil.performVirtualKeyHaptic(view)
         }
@@ -272,9 +291,11 @@ fun EverDropShareHubUI(
                     ) {
                         Button(
                             onClick = {
-                                val uri = selectedFileUri ?: return@Button
-                                HapticUtil.performVirtualKeyHaptic(view)
-                                shareFile(context, uri)
+                                if (selectedFileUri != null) {
+                                    HapticUtil.performVirtualKeyHaptic(view)
+                                    quickShareType = TransferType.FILE
+                                    showQuickShareSheet = true
+                                }
                             },
                             modifier = Modifier.weight(1f),
                             shape = MaterialTheme.shapes.large
@@ -411,6 +432,9 @@ fun EverDropShareHubUI(
                     value = shareText,
                     onValueChange = {
                         viewModel.setShareText(context, it)
+                        coroutineScope.launch {
+                            bringIntoViewRequester.bringIntoView()
+                        }
                     },
                     placeholder = {
                         Text(
@@ -424,7 +448,9 @@ fun EverDropShareHubUI(
                         .onFocusEvent { focusState ->
                             if (focusState.isFocused) {
                                 coroutineScope.launch {
-                                    delay(200)
+                                    delay(100)
+                                    bringIntoViewRequester.bringIntoView()
+                                    delay(250)
                                     bringIntoViewRequester.bringIntoView()
                                 }
                             }
@@ -462,13 +488,8 @@ fun EverDropShareHubUI(
                         onClick = {
                             if (shareText.isNotBlank()) {
                                 HapticUtil.performVirtualKeyHaptic(view)
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, shareText)
-                                }
-                                context.startActivity(
-                                    Intent.createChooser(sendIntent, context.getString(R.string.share_text_action))
-                                )
+                                quickShareType = TransferType.TEXT
+                                showQuickShareSheet = true
                             }
                         },
                         enabled = shareText.isNotBlank(),
@@ -501,6 +522,20 @@ fun EverDropShareHubUI(
                 }
             }
         }
+    }
+
+    if (showQuickShareSheet) {
+        EverDropQuickShareSheet(
+            sheetState = quickShareSheetState,
+            shareType = quickShareType,
+            fileName = selectedFileName,
+            fileSize = selectedFileSize,
+            fileUri = selectedFileUri,
+            rawFileSize = selectedFileRawBytes,
+            fileMimeType = selectedFileMimeType ?: "*/*",
+            shareText = shareText,
+            onDismissRequest = { showQuickShareSheet = false }
+        )
     }
 }
 

@@ -132,6 +132,9 @@ object EverDropFileManager {
     /**
      * Formats bytes into human-readable B, KB, MB, GB strings.
      */
+    /**
+     * Formats bytes into human-readable B, KB, MB, GB strings.
+     */
     fun formatFileSize(bytes: Long): String {
         if (bytes <= 0) return ""
         val units = arrayOf("B", "KB", "MB", "GB")
@@ -139,5 +142,52 @@ object EverDropFileManager {
         if (digitGroups >= units.size) digitGroups = units.size - 1
         val value = bytes / Math.pow(1024.0, digitGroups.toDouble())
         return String.format(java.util.Locale.getDefault(), "%.1f %s", value, units[digitGroups])
+    }
+
+    /**
+     * Checks whether a file should be treated as text based on mime type or file extension.
+     */
+    fun isTextFile(name: String?, mimeType: String?): Boolean {
+        if (mimeType != null) {
+            val lowerMime = mimeType.lowercase(java.util.Locale.ROOT)
+            if (lowerMime.startsWith("text/")) return true
+            if (lowerMime == "application/json" ||
+                lowerMime == "application/xml" ||
+                lowerMime == "application/javascript" ||
+                lowerMime == "application/x-javascript" ||
+                lowerMime == "application/x-sh" ||
+                lowerMime == "application/csv" ||
+                lowerMime.contains("+json") ||
+                lowerMime.contains("+xml")
+            ) {
+                return true
+            }
+        }
+        val extension = name?.substringAfterLast('.', "")?.lowercase(java.util.Locale.ROOT) ?: ""
+        val textExtensions = setOf(
+            "txt", "text", "md", "markdown", "csv", "json", "xml", "log",
+            "html", "htm", "tsv", "yaml", "yml", "ini", "conf", "properties",
+            "java", "kt", "py", "c", "cpp", "h", "hpp", "js", "ts", "sh", "bat", "sql"
+        )
+        return extension in textExtensions
+    }
+
+    /**
+     * Reads text content from a URI with a safe size limit (e.g. 1MB).
+     */
+    fun readTextFromUri(context: Context, uri: Uri, maxBytes: Int = 1024 * 1024): String? {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                val buffer = ByteArray(maxBytes)
+                val bytesRead = stream.read(buffer)
+                if (bytesRead > 0) {
+                    String(buffer, 0, bytesRead, Charsets.UTF_8)
+                } else {
+                    ""
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 }

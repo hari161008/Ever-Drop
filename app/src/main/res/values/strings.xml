@@ -147,4 +147,37 @@
     <string name="share_file_send">Share File</string>
     <string name="share_file_change">Change File</string>
     <string name="share_file_remove">Remove</string>
+
+    <string name="feat_orientation_share_title">Orientation Share</string>
+    <string name="feat_orientation_share_desc">Face down to share, face up to receive, both at any other angle</string>
+    <string name="feat_medrop_beaming_contact_title">Beaming Contact</string>
+    <string name="feat_medrop_no_beaming_contact">No contact selected for beaming</string>
+
+    <string name="receive_section_title">Receive</string>
+    <string name="receive_discoverable">Discoverable</string>
+    <string name="receive_ready_title">Ready to Receive</string>
+    <string name="receive_ready_desc">Hold another phone near the back of this device to receive files, text, or contacts via Ever Drop</string>
+    <string name="receive_status_active">NFC Reader Active • Listening</string>
+    <string name="receive_destination_info">Received files are automatically saved to Downloads/Ever Share and text is copied to your clipboard</string>
+
+    <!-- Quick Share (Wi-Fi Direct) Strings -->
+    <string name="quick_share_title">Quick Share</string>
+    <string name="quick_share_subtitle">Share via Wi-Fi Direct</string>
+    <string name="quick_share_searching">Looking for nearby devices…</string>
+    <string name="quick_share_no_devices">No nearby devices found</string>
+    <string name="quick_share_no_devices_hint">Make sure the other phone has Ever Drop open on the Receive tab</string>
+    <string name="quick_share_tap_to_share">Tap to send</string>
+    <string name="quick_share_connecting">Connecting…</string>
+    <string name="quick_share_transferring">Transferring…</string>
+    <string name="quick_share_sent_success">Sent successfully!</string>
+    <string name="quick_share_other_apps">Share with other apps</string>
+    <string name="quick_share_perm_required">Nearby device access is required to discover devices over Wi-Fi Direct</string>
+    <string name="quick_share_perm_grant">Grant Permission</string>
+    <string name="quick_share_wifi_disabled">Please enable Wi-Fi on your device to share via Wi-Fi Direct</string>
+    <string name="receive_wifi_direct_active">Wi-Fi Direct Active • Discoverable</string>
+    <string name="receive_wifi_direct_desc">This device is discoverable to nearby Ever Drop devices</string>
+    <string name="receive_incoming_transfer">Incoming Transfer</string>
+    <string name="receive_file_saved">Saved to Downloads/Ever Share</string>
+    <string name="receive_text_copied">Text copied to clipboard</string>
+    <string name="action_open_file">Open File</string>
 </resources>

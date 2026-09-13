@@ -33,6 +33,15 @@ object HapticUtil {
         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
     }
 
+    fun performSuccessHaptic(view: View) {
+        if (!isAppHapticsEnabled.value) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+        } else {
+            view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+        }
+    }
+
     fun performCustomHaptic(
         view: View,
         strength: Float,

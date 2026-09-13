@@ -61,6 +61,8 @@ import com.sameerasw.medrop.ui.core.sheets.PermissionsBottomSheet
 import com.sameerasw.medrop.ui.modifiers.BlurDirection
 import com.sameerasw.medrop.ui.modifiers.progressiveBlur
 import com.sameerasw.medrop.ui.theme.MeDropTheme
+import com.sameerasw.medrop.ui.features.BeamingContactSettingsCard
+import com.sameerasw.medrop.ui.features.MeDropHeaderUI
 import com.sameerasw.medrop.utils.MeDropContactPickerHelper
 import com.sameerasw.medrop.utils.PermissionUtils
 import com.sameerasw.medrop.viewmodels.MeDropViewModel
@@ -198,6 +200,16 @@ class SettingsActivity : ComponentActivity() {
                                     ),
                             )
 
+                            // PFP, Contact Name, and Beaming Controls at top of Settings
+                            MeDropHeaderUI(
+                                viewModel = viewModel,
+                                headerHeight = 200.dp,
+                                activeProfileType = safeSettings.activeProfileType,
+                                onPickContactClick = onPickContactClick,
+                                entranceProgress = 1f,
+                                showBeamingControls = true,
+                            )
+
                             // Quick Settings Tile Add Card
                             val isTileAdded by viewModel.isTileAdded
                             FeatureCard(
@@ -228,18 +240,6 @@ class SettingsActivity : ComponentActivity() {
                                         } catch (_: Exception) {}
                                     }
                                 },
-                            )
-
-                            // Contact Source Card
-                            FeatureCard(
-                                title = if (currentContact != null) {
-                                    stringResource(R.string.feat_medrop_change_contact)
-                                } else {
-                                    stringResource(R.string.feat_medrop_select_contact)
-                                },
-                                description = currentContact?.displayName ?: stringResource(R.string.feat_medrop_no_contact_desc),
-                                iconRes = R.drawable.rounded_contacts_product_24,
-                                onClick = onPickContactClick,
                             )
 
                             Text(
@@ -274,6 +274,13 @@ class SettingsActivity : ComponentActivity() {
                             )
 
                             RoundedCardContainer {
+                                IconToggleItem(
+                                    iconRes = R.drawable.rounded_devices_24,
+                                    title = stringResource(R.string.feat_orientation_share_title),
+                                    description = stringResource(R.string.feat_orientation_share_desc),
+                                    isChecked = safeSettings.orientationShare,
+                                    onCheckedChange = { viewModel.setOrientationShare(context, it) },
+                                )
                                 IconToggleItem(
                                     iconRes = R.drawable.rounded_contactless_24,
                                     title = stringResource(R.string.feat_medrop_enable_receiving),

@@ -33,6 +33,8 @@ object MeDropNfcManager {
     suspend fun startBroadcast(activity: Activity, settings: MeDropSettings) {
         val context = activity.applicationContext
 
+        MeDropHceService.isSharingAllowed = true
+
         // Re-arm active share payload (preserving FILE/TEXT priority over contact)
         EverDropNfcShareManager.rearmActiveShare(context, settings)
 
@@ -55,6 +57,7 @@ object MeDropNfcManager {
      */
     suspend fun stopBroadcast(activity: Activity) {
         val context = activity.applicationContext
+        MeDropHceService.isSharingAllowed = false
 
         withContext(Dispatchers.Main) {
             val nfcAdapter = NfcAdapter.getDefaultAdapter(context)

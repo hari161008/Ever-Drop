@@ -78,6 +78,7 @@ import com.sameerasw.medrop.ui.components.MeDropFloatingToolbar
 import com.sameerasw.medrop.ui.components.ToolbarItem
 import com.sameerasw.medrop.ui.core.sheets.PermissionItem
 import com.sameerasw.medrop.ui.core.sheets.PermissionsBottomSheet
+import com.sameerasw.medrop.ui.features.EverDropReceiveUI
 import com.sameerasw.medrop.ui.features.EverDropShareHubUI
 import com.sameerasw.medrop.ui.features.MeDropHeaderUI
 import com.sameerasw.medrop.ui.features.MeDropProfileFieldsUI
@@ -85,6 +86,8 @@ import com.sameerasw.medrop.ui.modifiers.BlurDirection
 import com.sameerasw.medrop.ui.modifiers.progressiveBlur
 import com.sameerasw.medrop.ui.theme.MeDropTheme
 import com.sameerasw.medrop.utils.HapticUtil
+import com.sameerasw.medrop.utils.DeviceFacing
+import com.sameerasw.medrop.utils.EverDropOrientationDetector
 import com.sameerasw.medrop.utils.MeDropContactPickerHelper
 import com.sameerasw.medrop.utils.PermissionUtils
 import com.sameerasw.medrop.viewmodels.MeDropViewModel
@@ -252,6 +255,15 @@ class MainActivity : AppCompatActivity() {
                     if (streamUri != null) {
                         val (name, sizeStr, rawBytes) = EverDropFileManager.queryFileInfoWithRawSize(context, streamUri)
                         val mime = incomingIntent.type ?: context.contentResolver.getType(streamUri) ?: "*/*"
+                        if (EverDropFileManager.isTextFile(name, mime)) {
+                            val fileText = EverDropFileManager.readTextFromUri(context, streamUri)
+                            if (fileText != null) {
+                                viewModel.clearShareFile(context)
+                                viewModel.setShareText(context, fileText)
+                                Toast.makeText(context, "Text ready to beam via Ever Drop", Toast.LENGTH_SHORT).show()
+                                return
+                            }
+                        }
                         viewModel.setSelectedFile(context, streamUri, name, sizeStr, rawBytes, mime)
                         Toast.makeText(context, "File ready to beam: $name", Toast.LENGTH_SHORT).show()
                     } else if (!sharedText.isNullOrBlank()) {
@@ -277,6 +289,15 @@ class MainActivity : AppCompatActivity() {
                     if (firstUri != null) {
                         val (name, sizeStr, rawBytes) = EverDropFileManager.queryFileInfoWithRawSize(context, firstUri)
                         val mime = context.contentResolver.getType(firstUri) ?: "*/*"
+                        if (EverDropFileManager.isTextFile(name, mime)) {
+                            val fileText = EverDropFileManager.readTextFromUri(context, firstUri)
+                            if (fileText != null) {
+                                viewModel.clearShareFile(context)
+                                viewModel.setShareText(context, fileText)
+                                Toast.makeText(context, "Text ready to beam via Ever Drop", Toast.LENGTH_SHORT).show()
+                                return
+                            }
+                        }
                         viewModel.setSelectedFile(context, firstUri, name, sizeStr, rawBytes, mime)
                         val countMsg = if (streamUris.size > 1) " (1 of ${streamUris.size})" else ""
                         Toast.makeText(context, "File ready to beam: $name$countMsg", Toast.LENGTH_SHORT).show()
@@ -290,27 +311,51 @@ class MainActivity : AppCompatActivity() {
                 handleIncomingIntent(activeIntent)
             }
 
-            // Keep NFC HCE broadcasting active according to current share state (text, file, or contact card)
-            LaunchedEffect(activity, safeSettings, activeShareType) {
-                if (activity != null) {
-                    com.sameerasw.medrop.utils.MeDropNfcManager.startBroadcast(activity, safeSettings)
-                }
+            val pagerState = rememberPagerState(
+                initialPage = 0,
+                pageCount = { 2 }
+            )
+
+            // Orientation detector: detects screen facing down (share), facing top (receive), or anyhow (both)
+            val orientationDetector = remember { EverDropOrientationDetector(context) }
+            val facing by orientationDetector.deviceFacing.collectAsState()
+
+            val isReceiveTabActive = pagerState.currentPage == 1
+            val isScanActive by com.sameerasw.medrop.services.MeDropHceService.isScanActive.collectAsState()
+
+            val hasStagedContent = activeShareType == com.sameerasw.medrop.utils.ShareTargetType.FILE ||
+                    activeShareType == com.sameerasw.medrop.utils.ShareTargetType.TEXT
+
+            val shouldShare = if (isScanActive) {
+                true // Maintain broadcast during active APDU session regardless of minor tilts
+            } else if (isReceiveTabActive) {
+                false
+            } else if (hasStagedContent) {
+                // When user actively selected a file or text to beam, keep share active
+                true
+            } else if (safeSettings.orientationShare) {
+                facing == DeviceFacing.FACING_DOWN || facing == DeviceFacing.ANYHOW
+            } else {
+                true
             }
 
-            DisposableEffect(activity, lifecycleOwner, safeSettings.enableReceiving) {
+            val shouldReceive = if (isScanActive) {
+                false
+            } else if (isReceiveTabActive) {
+                true // Explicitly discoverable & ready to receive on the Receive page
+            } else if (safeSettings.orientationShare) {
+                safeSettings.enableReceiving && (facing == DeviceFacing.FACING_UP || facing == DeviceFacing.ANYHOW)
+            } else {
+                safeSettings.enableReceiving
+            }
+
+            DisposableEffect(activity, lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
-                        if (activity != null) {
-                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                                com.sameerasw.medrop.utils.MeDropNfcManager.startBroadcast(activity, safeSettings)
-                            }
-                            if (safeSettings.enableReceiving) {
-                                com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { item ->
-                                    processReceivedItem(item)
-                                }
-                            }
-                        }
+                        orientationDetector.start()
                     } else if (event == Lifecycle.Event.ON_PAUSE) {
+                        orientationDetector.stop()
+                        com.sameerasw.medrop.utils.EverDropWifiDirectManager.stopPeerDiscovery()
                         if (activity != null) {
                             com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
                             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -320,22 +365,54 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
-                if (activity != null) {
-                    if (safeSettings.enableReceiving) {
-                        com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { item ->
-                            processReceivedItem(item)
-                        }
-                    } else {
-                        com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
-                    }
-                }
+                orientationDetector.start()
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
+                    orientationDetector.stop()
+                    com.sameerasw.medrop.utils.EverDropWifiDirectManager.destroy(context)
                     if (activity != null) {
                         com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
                         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                             com.sameerasw.medrop.utils.MeDropNfcManager.stopBroadcast(activity)
                         }
+                    }
+                }
+            }
+
+            // Dynamically coordinate NFC Broadcast based on shouldShare, safeSettings, and activeShareType
+            LaunchedEffect(activity, shouldShare, safeSettings, activeShareType) {
+                if (activity != null) {
+                    if (shouldShare) {
+                        com.sameerasw.medrop.utils.MeDropNfcManager.startBroadcast(activity, safeSettings)
+                    } else {
+                        com.sameerasw.medrop.utils.MeDropNfcManager.stopBroadcast(activity)
+                    }
+                }
+            }
+
+            // Automatically revert to beaming contact card after sharing file or text completes
+            LaunchedEffect(Unit) {
+                com.sameerasw.medrop.services.MeDropHceService.onTransferCompleted.collect {
+                    val currentType = com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.value
+                    if (currentType == com.sameerasw.medrop.utils.ShareTargetType.FILE ||
+                        currentType == com.sameerasw.medrop.utils.ShareTargetType.TEXT) {
+                        viewModel.clearShareFile(context)
+                        viewModel.clearShareText(context)
+                        com.sameerasw.medrop.utils.EverDropNfcShareManager.setForceShareContact(context, safeSettings)
+                        Toast.makeText(context, "Transfer complete • Beaming Contact", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+
+            // Dynamically coordinate NFC Reader Mode based on shouldReceive
+            LaunchedEffect(activity, shouldReceive) {
+                if (activity != null) {
+                    if (shouldReceive) {
+                        com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { item ->
+                            processReceivedItem(item)
+                        }
+                    } else {
+                        com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
                     }
                 }
             }
@@ -353,51 +430,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             val density = LocalDensity.current
-            val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-            val screenWidth = configuration.screenWidthDp.dp
-            val screenHeight = configuration.screenHeightDp.dp
-            val minHeaderHeight = 200.dp
-            val maxHeaderHeight = minOf(screenWidth, screenHeight * 0.6f).coerceAtLeast(minHeaderHeight)
-            var headerHeight by remember { mutableStateOf(minHeaderHeight) }
-
             val view = LocalView.current
             val scope = rememberCoroutineScope()
 
-            val enabledTabs = remember(safeSettings) {
-                val list = mutableListOf(MeDropProfileType.CONTACT)
-                if (safeSettings.professionalProfile.enabled) {
-                    list.add(MeDropProfileType.PROFESSIONAL)
-                }
-                if (safeSettings.customProfile.enabled) {
-                    list.add(MeDropProfileType.CUSTOM)
-                }
-                list
-            }
-
-            val pagerState = rememberPagerState(
-                initialPage = 0,
-                pageCount = { enabledTabs.size }
-            )
-
-            // Adjust pager page if tabs count changes
-            LaunchedEffect(enabledTabs) {
-                if (pagerState.currentPage >= enabledTabs.size) {
-                    pagerState.scrollToPage(0)
-                }
-            }
-
-            // Haptics and active profile sync on tab switch
+            // Haptics on tab switch
             LaunchedEffect(pagerState) {
                 var isFirst = true
-                snapshotFlow { pagerState.currentPage }.collect { page ->
+                snapshotFlow { pagerState.currentPage }.collect { _ ->
                     if (isFirst) {
                         isFirst = false
                     } else {
                         HapticUtil.performHeavyHaptic(view)
-                        val selectedType = enabledTabs.getOrNull(page)
-                        if (selectedType != null && selectedType != safeSettings.activeProfileType) {
-                            viewModel.setMeDropActiveProfile(context, selectedType)
-                        }
                     }
                 }
             }
@@ -427,92 +470,27 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val onPickContactClick = {
-                if (PermissionUtils.hasContactsPermission(context)) {
-                    contactPickerLauncher.launch(MeDropContactPickerHelper.buildPickIntent())
-                } else {
-                    showPermissionsSheet = true
-                }
-            }
-
-            val nestedScrollConnection =
-                remember {
-                    object : NestedScrollConnection {
-                        override fun onPreScroll(
-                            available: Offset,
-                            source: NestedScrollSource,
-                        ): Offset {
-                            val delta = available.y
-                            if (delta < 0 && headerHeight > minHeaderHeight) {
-                                val oldHeight = headerHeight
-                                headerHeight =
-                                    with(density) {
-                                        (oldHeight.toPx() + delta).toDp()
-                                    }.coerceAtLeast(minHeaderHeight)
-                                val consumed = oldHeight - headerHeight
-                                return Offset(0f, with(density) { -consumed.toPx() })
-                            }
-                            return Offset.Zero
-                        }
-
-                        override fun onPostScroll(
-                            consumed: Offset,
-                            available: Offset,
-                            source: NestedScrollSource,
-                        ): Offset {
-                            val delta = available.y
-                            if (delta > 0) {
-                                val oldHeight = headerHeight
-                                headerHeight =
-                                    with(density) {
-                                        (oldHeight.toPx() + delta).toDp()
-                                    }.coerceAtMost(maxHeaderHeight)
-
-                                if (headerHeight == maxHeaderHeight && oldHeight < maxHeaderHeight) {
-                                    HapticUtil.performLightHaptic(view)
-                                }
-
-                                val produced = headerHeight - oldHeight
-                                return Offset(0f, with(density) { produced.toPx() })
-                            }
-                            return Offset.Zero
+            val toolbarItems = listOf(
+                ToolbarItem(
+                    iconRes = R.drawable.rounded_share_24,
+                    labelRes = R.string.share_section_title,
+                    onClick = {
+                        scope.launch {
+                            pagerState.animateScrollToPage(0, animationSpec = tween(300))
                         }
                     }
-                }
+                ),
+                ToolbarItem(
+                    iconRes = R.drawable.rounded_contactless_24,
+                    labelRes = R.string.receive_section_title,
+                    onClick = {
+                        scope.launch {
+                            pagerState.animateScrollToPage(1, animationSpec = tween(300))
+                        }
+                    }
+                )
+            )
 
-            val toolbarItems = enabledTabs.mapIndexed { index, type ->
-                when (type) {
-                    MeDropProfileType.CONTACT -> ToolbarItem(
-                        iconRes = R.drawable.rounded_share_24,
-                        labelRes = R.string.feat_medrop_profile_contact,
-                        onClick = {
-                            scope.launch {
-                                pagerState.animateScrollToPage(index, animationSpec = tween(300))
-                            }
-                        }
-                    )
-                    MeDropProfileType.PROFESSIONAL -> ToolbarItem(
-                        iconRes = R.drawable.rounded_work_24,
-                        labelRes = R.string.feat_medrop_profile_professional,
-                        onClick = {
-                            scope.launch {
-                                pagerState.animateScrollToPage(index, animationSpec = tween(300))
-                            }
-                        }
-                    )
-                    MeDropProfileType.CUSTOM -> ToolbarItem(
-                        iconRes = R.drawable.rounded_id_card_24,
-                        labelRes = R.string.feat_medrop_profile_custom,
-                        onClick = {
-                            scope.launch {
-                                pagerState.animateScrollToPage(index, animationSpec = tween(300))
-                            }
-                        }
-                    )
-                }
-            }
-
-            val activeProfileType = enabledTabs.getOrNull(pagerState.currentPage) ?: MeDropProfileType.CONTACT
             val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
             val isKeyboardVisible = imeBottom > 0.dp
 
@@ -539,6 +517,16 @@ class MainActivity : AppCompatActivity() {
                                     direction = BlurDirection.TOP,
                                 ),
                     ) {
+                        val scrollState = rememberScrollState()
+
+                        // Smoothly scroll to give generous clearance when keyboard appears
+                        LaunchedEffect(isKeyboardVisible) {
+                            if (isKeyboardVisible) {
+                                kotlinx.coroutines.delay(100)
+                                scrollState.animateScrollTo(scrollState.maxValue)
+                            }
+                        }
+
                         Column(
                             modifier =
                                 Modifier
@@ -549,60 +537,49 @@ class MainActivity : AppCompatActivity() {
                                         height = with(density) { 150.dp.toPx() },
                                         direction = BlurDirection.BOTTOM,
                                     )
-                                    .nestedScroll(nestedScrollConnection)
-                                    .verticalScroll(rememberScrollState()),
+                                    .verticalScroll(scrollState),
                         ) {
-                            val expansionFraction = ((headerHeight - minHeaderHeight) / (maxHeaderHeight - minHeaderHeight)).coerceIn(0f, 1f)
-                            val topSpacerHeight = (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() * (1f - expansionFraction)) - (24.dp * expansionFraction)
                             Spacer(
                                 modifier =
-                                    Modifier.height(topSpacerHeight.coerceAtLeast(-24.dp)),
-                            )
-
-                            // Common Top Header: Photo (with morphing shape) & Contact Name
-                            MeDropHeaderUI(
-                                viewModel = viewModel,
-                                headerHeight = headerHeight,
-                                activeProfileType = activeProfileType,
-                                onPickContactClick = onPickContactClick,
-                                entranceProgress = entranceProgress.value,
-                                modifier = Modifier.padding(top = (4.dp * (1f - expansionFraction))),
+                                    Modifier.height(
+                                        WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp
+                                    ),
                             )
 
                             val contentOffsetY = with(density) { (1f - entranceProgress.value) * 300.dp.toPx() }
                             val contentAlpha = entranceProgress.value.coerceIn(0f, 1f)
 
-                            // Ever Drop Share Hub: Options to share text and files
-                            EverDropShareHubUI(
-                                viewModel = viewModel,
+                            HorizontalPager(
+                                state = pagerState,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
                                     .offset { androidx.compose.ui.unit.IntOffset(0, contentOffsetY.toInt()) }
-                                    .graphicsLayer { alpha = contentAlpha }
-                            )
-
-                            // Swipeable Fields Area per Tab (smoothly slides up from bottom)
-                            if (safeSettings.contact != null) {
-                                HorizontalPager(
-                                    state = pagerState,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .offset { androidx.compose.ui.unit.IntOffset(0, contentOffsetY.toInt()) }
-                                        .graphicsLayer { alpha = contentAlpha },
-                                    verticalAlignment = Alignment.Top,
-                                ) { page ->
-                                    val currentProfileType = enabledTabs.getOrNull(page) ?: MeDropProfileType.CONTACT
-                                    MeDropProfileFieldsUI(
-                                        viewModel = viewModel,
-                                        profileType = currentProfileType,
-                                    )
+                                    .graphicsLayer { alpha = contentAlpha },
+                                verticalAlignment = Alignment.Top,
+                            ) { page ->
+                                when (page) {
+                                    0 -> {
+                                        // Share Hub: Options to share files and text
+                                        EverDropShareHubUI(
+                                            viewModel = viewModel,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                        )
+                                    }
+                                    1 -> {
+                                        // Receive Page: Discoverable status and incoming transfers
+                                        EverDropReceiveUI(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                        )
+                                    }
                                 }
                             }
 
-                            // Dynamic bottom spacing: Collapses when keyboard is visible to maximize screen space
+                            // Dynamic bottom spacing: Generous clearance when keyboard is open
                             val bottomSpacerHeight = if (isKeyboardVisible) {
-                                32.dp
+                                160.dp
                             } else {
                                 WindowInsets.navigationBars
                                     .asPaddingValues()

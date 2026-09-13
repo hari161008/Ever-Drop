@@ -226,6 +226,12 @@ class MeDropViewModel : ViewModel() {
         saveMeDropSettings(context, updated)
     }
 
+    fun setOrientationShare(context: Context, enabled: Boolean) {
+        val current = meDropSettings.value ?: MeDropSettings()
+        val updated = current.copy(orientationShare = enabled)
+        saveMeDropSettings(context, updated)
+    }
+
     fun toggleMeDropProfileEntry(
         context: Context,
         type: MeDropProfileType,

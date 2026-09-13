@@ -22,10 +22,11 @@ import com.sameerasw.medrop.ui.sheets.ReceivedContactBottomSheet
 import com.sameerasw.medrop.ui.theme.MeDropTheme
 import com.sameerasw.medrop.utils.EverDropFileManager
 import com.sameerasw.medrop.utils.ReceivedContact
-import com.sameerasw.medrop.utils.VCardParser
-import com.sameerasw.medrop.viewmodels.MeDropViewModel
-
 class ReceivedContactActivity : ComponentActivity() {
+
+    private val currentItem = mutableStateOf<EverDropItem?>(null)
+    private var uiInitialized = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -42,29 +43,41 @@ class ReceivedContactActivity : ComponentActivity() {
                     WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         )
 
-        var parsedItem: com.sameerasw.medrop.domain.model.EverDropItem? = null
-        intent?.let { int ->
-            if (int.action == android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED) {
-                val rawMsgs = int.getParcelableArrayExtra(android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES)
-                if (rawMsgs != null) {
-                    for (raw in rawMsgs) {
-                        val msg = raw as? android.nfc.NdefMessage ?: continue
-                        val item = com.sameerasw.medrop.utils.MeDropNfcManager.parseNdefMessage(applicationContext, msg)
-                        if (item != null) {
-                            parsedItem = item
-                            break
-                        }
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(int: android.content.Intent?) {
+        if (int == null) return
+
+        var parsedItem: EverDropItem? = null
+        if (int.action == android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED) {
+            val rawMsgs = int.getParcelableArrayExtra(android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES)
+            if (rawMsgs != null) {
+                for (raw in rawMsgs) {
+                    val msg = raw as? android.nfc.NdefMessage ?: continue
+                    val item = com.sameerasw.medrop.utils.MeDropNfcManager.parseNdefMessage(applicationContext, msg)
+                    if (item != null) {
+                        parsedItem = item
+                        break
                     }
                 }
             }
         }
 
         if (parsedItem == null) {
-            finish()
+            if (currentItem.value == null) {
+                finish()
+            }
             return
         }
 
-        // Direct handling for Text and File without opening the app window
+        // Direct handling for Text and File without keeping window open
         when (parsedItem) {
             is EverDropItem.Text -> {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -94,30 +107,34 @@ class ReceivedContactActivity : ComponentActivity() {
                 return
             }
             is EverDropItem.Contact -> {
-                // Proceed below to display ReceivedContactBottomSheet
+                currentItem.value = parsedItem
+                setupUI()
             }
         }
+    }
+
+    private fun setupUI() {
+        if (uiInitialized) return
+        uiInitialized = true
 
         setContent {
-            val mainViewModel: MeDropViewModel = viewModel()
+            val mainViewModel: com.sameerasw.medrop.viewmodels.MeDropViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
             val isPitchBlackThemeEnabled by mainViewModel.isPitchBlackThemeEnabled
-            val context = LocalContext.current
+            val context = androidx.compose.ui.platform.LocalContext.current
 
-            LaunchedEffect(Unit) {
+            androidx.compose.runtime.LaunchedEffect(Unit) {
                 mainViewModel.check(context)
             }
 
-            var itemToDisplay by remember { mutableStateOf<EverDropItem?>(parsedItem) }
-
-            MeDropTheme(pitchBlackTheme = isPitchBlackThemeEnabled) {
-                val item = itemToDisplay
+            val item by currentItem
+            com.sameerasw.medrop.ui.theme.MeDropTheme(pitchBlackTheme = isPitchBlackThemeEnabled) {
                 if (item is EverDropItem.Contact) {
-                    val contact = item.parsed ?: VCardParser.parse(item.vcard)
+                    val contact = (item as EverDropItem.Contact).parsed ?: com.sameerasw.medrop.utils.VCardParser.parse((item as EverDropItem.Contact).vcard)
                     if (contact != null) {
                         ReceivedContactBottomSheet(
                             contact = contact,
                             onDismissRequest = {
-                                itemToDisplay = null
+                                currentItem.value = null
                                 finish()
                             }
                         )

@@ -54,7 +54,14 @@ class MeDropHceService : HostApduService() {
 
         var pendingNdefBytes: ByteArray? = null
 
+        var isSharingAllowed = true
+
         val isScanActive = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+        val onTransferCompleted = kotlinx.coroutines.flow.MutableSharedFlow<Unit>(
+            replay = 0,
+            extraBufferCapacity = 1
+        )
 
         private const val EVERDROP_PACKAGE_NAME = "com.coolappstore.everdrop.by.svhp"
 
@@ -90,41 +97,48 @@ class MeDropHceService : HostApduService() {
         fun clearVCard() {
             clearNdef()
         }
+
+        fun ensureDefaultContactLoaded(context: android.content.Context) {
+            val activeType = com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.value
+            if (activeType == com.sameerasw.medrop.utils.ShareTargetType.FILE ||
+                activeType == com.sameerasw.medrop.utils.ShareTargetType.TEXT) {
+                return
+            }
+            if (pendingNdefBytes == null) {
+                val json = MeDropRepository(context).getMeDropSettingsJson()
+                if (json != null) {
+                    try {
+                        val settings = Gson().fromJson(json, MeDropSettings::class.java)
+                        val contact = settings.contact
+                        if (contact != null) {
+                            val activeProfile = settings.activeProfileType
+                            val activeEntries = settings.getEffectiveEntryIds(activeProfile)
+                            val photoUri = settings.getEffectivePhotoUri(activeProfile)
+                            val vcard = contact.toVCard(context, activeEntries, photoUri)
+                            prepareVCard(vcard)
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+        }
     }
 
     private var selectedFile: ByteArray? = null
 
     override fun onCreate() {
         super.onCreate()
-        if (pendingNdefBytes == null) {
-            // Strict guard: If file or text is actively being shared, NEVER default to contact card!
-            val activeType = com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.value
-            if (activeType == com.sameerasw.medrop.utils.ShareTargetType.FILE ||
-                activeType == com.sameerasw.medrop.utils.ShareTargetType.TEXT) {
-                return
-            }
-
-            val json = MeDropRepository(this).getMeDropSettingsJson()
-            if (json != null) {
-                try {
-                    val settings = Gson().fromJson(json, MeDropSettings::class.java)
-                    val contact = settings.contact
-                    if (contact != null) {
-                        val activeProfile = settings.activeProfileType
-                        val activeEntries = settings.getEffectiveEntryIds(activeProfile)
-                        val photoUri = settings.getEffectivePhotoUri(activeProfile)
-                        val vcard = contact.toVCard(this, activeEntries, photoUri)
-                        prepareVCard(vcard)
-                    }
-                } catch (_: Exception) {}
-            }
-        }
+        ensureDefaultContactLoaded(this)
     }
 
     private var scanResetJob: Job? = null
 
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray {
+        ensureDefaultContactLoaded(this)
         if (commandApdu.size < 4) return SW_UNKNOWN_CMD
+
+        if (!isSharingAllowed && !isScanActive.value) {
+            return SW_FILE_NOT_FOUND
+        }
 
         return when {
             isSelectAidCommand(commandApdu) -> {
@@ -170,6 +184,10 @@ class MeDropHceService : HostApduService() {
                     scanResetJob = CoroutineScope(Dispatchers.Main).launch {
                         delay(1200L)
                         isScanActive.value = false
+                    }
+
+                    if (offset + length >= data.size) {
+                        onTransferCompleted.tryEmit(Unit)
                     }
                 }
                 

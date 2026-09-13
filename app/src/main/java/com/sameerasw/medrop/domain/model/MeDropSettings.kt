@@ -8,7 +8,8 @@ data class MeDropSettings(
     val usePhotoForAll: Boolean = true,
     val allowWhenLocked: Boolean = true,
     val showRipple: Boolean = true,
-    val enableReceiving: Boolean = false,
+    val enableReceiving: Boolean = true,
+    val orientationShare: Boolean = true,
     val activeProfileType: MeDropProfileType = MeDropProfileType.CONTACT
 ) {
     fun getProfile(type: MeDropProfileType): MeDropProfile {
