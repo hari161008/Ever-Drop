@@ -22,6 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MeDrop"
+rootProject.name = "Ever Drop"
 include(":app")
  

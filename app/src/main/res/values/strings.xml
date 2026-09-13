@@ -1,16 +1,18 @@
 <resources>
-    <string name="app_name">MeDrop</string>
-    <string name="feat_medrop_title">MeDrop</string>
+    <string name="app_name">Ever Drop</string>
+    <string name="feat_medrop_title">Ever Drop</string>
     <string name="feat_medrop_set_up">Set Up</string>
     <string name="feat_medrop_select_contact">Select Contact</string>
     <string name="feat_medrop_pick_contact">Pick a contact</string>
     <string name="feat_medrop_change_contact">Change Contact</string>
+    <string name="feat_medrop_unchoose_contact">Unchoose contact</string>
+    <string name="feat_medrop_clear_contact">Clear contact</string>
     <string name="feat_medrop_allow_when_locked">Allow when Locked</string>
-    <string name="feat_medrop_allow_when_locked_desc">Open MeDrop from the quick tile even when the screen is locked</string>
+    <string name="feat_medrop_allow_when_locked_desc">Open Ever Drop from the quick tile even when the screen is locked</string>
     <string name="feat_medrop_show_ripple">Show ripple</string>
     <string name="feat_medrop_tap_to_share">Tap to share</string>
     <string name="feat_medrop_no_contact">No contact selected</string>
-    <string name="feat_medrop_no_contact_desc">Tap below to choose a contact to share via NFC</string>
+    <string name="feat_medrop_no_contact_desc">Tap below to choose a contact to share</string>
     <string name="feat_medrop_include_photo">Include profile photo</string>
     <string name="feat_medrop_share_fields_title">What to share</string>
     <string name="feat_medrop_field_name">Display Name</string>
@@ -33,7 +35,7 @@
     <string name="feat_medrop_broadcasting">Broadcasting contact via NFC…</string>
     <string name="feat_medrop_nfc_unavailable">NFC is not available on this device</string>
     <string name="feat_medrop_nfc_disabled">NFC is disabled. Enable it in Settings to share.</string>
-    <string name="feat_medrop_profile_contact">Contact</string>
+    <string name="feat_medrop_profile_contact">Share</string>
     <string name="feat_medrop_profile_professional">Professional</string>
     <string name="feat_medrop_profile_professional_desc">For your business needs</string>
     <string name="feat_medrop_profile_custom">Custom</string>
@@ -58,7 +60,7 @@
     <string name="feat_medrop_action_save">Save</string>
     <string name="feat_medrop_action_cancel">Cancel</string>
     <string name="feat_medrop_action_reset_default">Reset to default</string>
-    <string name="about_desc_medrop">Share your contact card with another device using NFC — similar to Apple\'s NameDrop. Your phone acts as a virtual NFC card that any NFC-enabled device can read.</string>
+    <string name="about_desc_medrop">Share your files, text, and contact card with another device using Ever Drop.</string>
 
     <string name="content_desc_back">Back</string>
     <string name="action_help_guide">Help Guide</string>
@@ -75,7 +77,7 @@
     <string name="help_section_setup_title">Setting Up Your Card</string>
     <string name="help_section_setup_desc">Select your own contact card from Google Contacts to populate your information. You can customize fields and edit what is shown across Contact, Professional, and Custom profiles.</string>
     
-    <string name="help_section_nfc_title">NFC Sharing (MeDrop)</string>
+    <string name="help_section_nfc_title">NFC Sharing (Ever Drop)</string>
     <string name="help_section_nfc_desc">Turn on NFC in your system settings. Hold your device near another NFC-enabled Android or iOS device. When detected, the other phone will receive your virtual vCard contact details instantly.</string>
 
     <string name="help_section_lockscreen_title">Lockscreen Access</string>
@@ -92,8 +94,8 @@
     <string name="setting_pitch_black_theme_desc">Use pure black background in dark mode</string>
     <string name="label_use_blur">Use blur</string>
     <string name="desc_use_blur">Enable progressive blur elements across the UI</string>
-    <string name="about_title">About</string>
-    <string name="about_app_desc">MeDrop allows seamless sharing of your contact card and profiles using NFC Host Card Emulation.</string>
+    <string name="about_title">About Ever Drop</string>
+    <string name="about_app_desc">Ever Drop allows seamless sharing of files, text, and contact profiles.</string>
 
     <string name="requires_following_permissions">%1$s requires following permissions</string>
     <string name="perm_contacts_title">Contacts Access</string>
@@ -129,6 +131,20 @@
     <string name="feat_medrop_enable_receiving">Receive contacts</string>
     <string name="feat_medrop_enable_receiving_desc">Allow receiving contact cards when holding near another device</string>
     <string name="feat_medrop_add_tile_title">Quick Settings Tile</string>
-    <string name="feat_medrop_add_tile_desc">Add the MeDrop tile to your Quick Settings panel for one-tap sharing</string>
+    <string name="feat_medrop_add_tile_desc">Add the Ever Drop tile to your Quick Settings panel for one-tap sharing</string>
     <string name="feat_medrop_tile_added">Added to Quick Settings</string>
+
+    <string name="share_section_title">Share</string>
+    <string name="share_text_title">Share Text</string>
+    <string name="share_text_hint">Type or paste text to share…</string>
+    <string name="share_text_action">Share Text</string>
+    <string name="share_text_copy">Copy</string>
+    <string name="share_text_copied">Text copied to clipboard</string>
+    <string name="share_text_clear">Clear</string>
+    <string name="share_files_title">Share Files</string>
+    <string name="share_files_desc">Pick any file to share</string>
+    <string name="share_files_action">Add File</string>
+    <string name="share_file_send">Share File</string>
+    <string name="share_file_change">Change File</string>
+    <string name="share_file_remove">Remove</string>
 </resources>

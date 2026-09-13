@@ -144,7 +144,7 @@ fun MeDropBottomSheet(
             if (event == Lifecycle.Event.ON_RESUME) {
                 viewModel.loadMeDropSettings(context)
                 if (activity != null && safeSettings.enableReceiving) {
-                    MeDropNfcManager.enableReaderMode(activity) { vcardStr ->
+                    MeDropNfcManager.enableReaderModeVCard(activity) { vcardStr ->
                         val parsed = com.sameerasw.medrop.utils.VCardParser.parse(vcardStr)
                         if (parsed != null) {
                             val loc = IntArray(2)
@@ -172,7 +172,7 @@ fun MeDropBottomSheet(
         lifecycleOwner.lifecycle.addObserver(observer)
         if (activity != null) {
             if (safeSettings.enableReceiving) {
-                MeDropNfcManager.enableReaderMode(activity) { vcardStr ->
+                MeDropNfcManager.enableReaderModeVCard(activity) { vcardStr ->
                     val parsed = com.sameerasw.medrop.utils.VCardParser.parse(vcardStr)
                     if (parsed != null) {
                         val loc = IntArray(2)

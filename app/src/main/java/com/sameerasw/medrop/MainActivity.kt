@@ -2,10 +2,14 @@ package com.sameerasw.medrop
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -21,6 +25,8 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -32,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,13 +69,16 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.gson.Gson
 import com.sameerasw.medrop.data.repository.MeDropRepository
+import com.sameerasw.medrop.domain.model.EverDropItem
 import com.sameerasw.medrop.domain.model.MeDropProfileType
 import com.sameerasw.medrop.domain.model.MeDropSettings
+import com.sameerasw.medrop.utils.EverDropFileManager
 import com.sameerasw.medrop.ui.activities.SettingsActivity
 import com.sameerasw.medrop.ui.components.MeDropFloatingToolbar
 import com.sameerasw.medrop.ui.components.ToolbarItem
 import com.sameerasw.medrop.ui.core.sheets.PermissionItem
 import com.sameerasw.medrop.ui.core.sheets.PermissionsBottomSheet
+import com.sameerasw.medrop.ui.features.EverDropShareHubUI
 import com.sameerasw.medrop.ui.features.MeDropHeaderUI
 import com.sameerasw.medrop.ui.features.MeDropProfileFieldsUI
 import com.sameerasw.medrop.ui.modifiers.BlurDirection
@@ -80,11 +90,24 @@ import com.sameerasw.medrop.utils.PermissionUtils
 import com.sameerasw.medrop.viewmodels.MeDropViewModel
 import kotlinx.coroutines.launch
 
+/**
+ * MainActivity
+ *
+ * Core application entry point:
+ * - Hosts Ever Drop Share Hub and Profile UI in edge-to-edge Scaffold
+ * - Manages dynamic IME / keyboard layout adjustment
+ * - Processes incoming Android Share Sheet intents (ACTION_SEND & ACTION_SEND_MULTIPLE)
+ * - Drives NFC Host Card Emulation (HCE) broadcasting and foreground reader mode
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 class MainActivity : AppCompatActivity() {
+
+    private val currentIntent = mutableStateOf<Intent?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+        currentIntent.value = intent
         enableEdgeToEdge(
             statusBarStyle =
                 SystemBarStyle.auto(
@@ -151,78 +174,156 @@ class MainActivity : AppCompatActivity() {
             val settings by viewModel.meDropSettings
             val safeSettings = settings ?: MeDropSettings()
 
-            var receivedContact by remember { mutableStateOf<com.sameerasw.medrop.utils.ReceivedContact?>(null) }
+            val activeShareType by com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.collectAsState()
+            var receivedItem by remember { mutableStateOf<com.sameerasw.medrop.domain.model.EverDropItem?>(null) }
 
             val activity = context as? androidx.activity.ComponentActivity
             val mainView = androidx.compose.ui.platform.LocalView.current
-            LaunchedEffect(activity?.intent) {
-                activity?.intent?.let { intent ->
-                    if (intent.action == android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED) {
-                        val rawMsgs = intent.getParcelableArrayExtra(android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES)
-                        if (rawMsgs != null) {
-                            for (raw in rawMsgs) {
-                                val msg = raw as? android.nfc.NdefMessage ?: continue
-                                for (rec in msg.records) {
-                                    val text = String(rec.payload, Charsets.UTF_8)
-                                    if (text.contains("BEGIN:VCARD", ignoreCase = true)) {
-                                        val start = text.indexOf("BEGIN:VCARD", ignoreCase = true)
-                                        val clean = text.substring(start)
-                                        val parsed = com.sameerasw.medrop.utils.VCardParser.parse(clean)
-                                        if (parsed != null) {
-                                            val loc = IntArray(2)
-                                            mainView.getLocationInWindow(loc)
-                                            val cx = loc[0] + (mainView.width / 2f)
-                                            val cy = loc[1] + (mainView.height / 2f)
-                                            MainActivity.triggerLiquidRipple(cx, cy)
-                                            HapticUtil.performHeavyHaptic(mainView)
-                                            receivedContact = parsed
-                                            break
-                                        }
-                                    }
-                                }
+
+            fun processReceivedItem(item: EverDropItem) {
+                val loc = IntArray(2)
+                mainView.getLocationInWindow(loc)
+                val cx = loc[0] + (mainView.width / 2f)
+                val cy = loc[1] + (mainView.height / 2f)
+                MainActivity.triggerLiquidRipple(cx, cy)
+                HapticUtil.performHeavyHaptic(mainView)
+
+                when (item) {
+                    is EverDropItem.Text -> {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("Received Text", item.text))
+                        Toast.makeText(context, "Text copied to clipboard", Toast.LENGTH_SHORT).show()
+                    }
+                    is EverDropItem.FileItem -> {
+                        if (item.localSavedUri == null && !item.base64Data.isNullOrBlank()) {
+                            try {
+                                val bytes = android.util.Base64.decode(item.base64Data, android.util.Base64.DEFAULT)
+                                EverDropFileManager.saveFileToEverShare(
+                                    context,
+                                    item.name,
+                                    item.mimeType,
+                                    bytes
+                                )
+                            } catch (_: Exception) {}
+                        }
+                        Toast.makeText(
+                            context,
+                            "Saved to Downloads/Ever Share: ${item.name}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    is EverDropItem.Contact -> {
+                        receivedItem = item
+                    }
+                }
+            }
+
+            fun handleIncomingIntent(incomingIntent: Intent?) {
+                if (incomingIntent == null) return
+
+                // 1. NFC NDEF Tag / Beam Discovered
+                if (incomingIntent.action == android.nfc.NfcAdapter.ACTION_NDEF_DISCOVERED) {
+                    val rawMsgs = incomingIntent.getParcelableArrayExtra(android.nfc.NfcAdapter.EXTRA_NDEF_MESSAGES)
+                    if (rawMsgs != null) {
+                        for (raw in rawMsgs) {
+                            val msg = raw as? android.nfc.NdefMessage ?: continue
+                            val parsed = com.sameerasw.medrop.utils.MeDropNfcManager.parseNdefMessage(context, msg)
+                            if (parsed != null) {
+                                processReceivedItem(parsed)
+                                break
                             }
                         }
                     }
+                    return
+                }
+
+                // 2. Android Share Sheet: Single file or text
+                if (incomingIntent.action == Intent.ACTION_SEND) {
+                    val streamUri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        incomingIntent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        incomingIntent.getParcelableExtra(Intent.EXTRA_STREAM)
+                    } ?: incomingIntent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+
+                    val sharedText = incomingIntent.getStringExtra(Intent.EXTRA_TEXT)
+                        ?: incomingIntent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+
+                    if (streamUri != null) {
+                        val (name, sizeStr, rawBytes) = EverDropFileManager.queryFileInfoWithRawSize(context, streamUri)
+                        val mime = incomingIntent.type ?: context.contentResolver.getType(streamUri) ?: "*/*"
+                        viewModel.setSelectedFile(context, streamUri, name, sizeStr, rawBytes, mime)
+                        Toast.makeText(context, "File ready to beam: $name", Toast.LENGTH_SHORT).show()
+                    } else if (!sharedText.isNullOrBlank()) {
+                        viewModel.setShareText(context, sharedText)
+                        Toast.makeText(context, "Text ready to beam via Ever Drop", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+
+                // 3. Android Share Sheet: Multiple files
+                if (incomingIntent.action == Intent.ACTION_SEND_MULTIPLE) {
+                    val streamUris = incomingIntent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                        ?: run {
+                            val list = ArrayList<android.net.Uri>()
+                            incomingIntent.clipData?.let { cd ->
+                                for (i in 0 until cd.itemCount) {
+                                    cd.getItemAt(i)?.uri?.let { list.add(it) }
+                                }
+                            }
+                            list
+                        }
+                    val firstUri = streamUris.firstOrNull()
+                    if (firstUri != null) {
+                        val (name, sizeStr, rawBytes) = EverDropFileManager.queryFileInfoWithRawSize(context, firstUri)
+                        val mime = context.contentResolver.getType(firstUri) ?: "*/*"
+                        viewModel.setSelectedFile(context, firstUri, name, sizeStr, rawBytes, mime)
+                        val countMsg = if (streamUris.size > 1) " (1 of ${streamUris.size})" else ""
+                        Toast.makeText(context, "File ready to beam: $name$countMsg", Toast.LENGTH_SHORT).show()
+                    }
+                    return
+                }
+            }
+
+            val activeIntent by currentIntent
+            LaunchedEffect(activeIntent) {
+                handleIncomingIntent(activeIntent)
+            }
+
+            // Keep NFC HCE broadcasting active according to current share state (text, file, or contact card)
+            LaunchedEffect(activity, safeSettings, activeShareType) {
+                if (activity != null) {
+                    com.sameerasw.medrop.utils.MeDropNfcManager.startBroadcast(activity, safeSettings)
                 }
             }
 
             DisposableEffect(activity, lifecycleOwner, safeSettings.enableReceiving) {
                 val observer = LifecycleEventObserver { _, event ->
                     if (event == Lifecycle.Event.ON_RESUME) {
-                        if (activity != null && safeSettings.enableReceiving) {
-                            com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { vcardStr ->
-                                val parsed = com.sameerasw.medrop.utils.VCardParser.parse(vcardStr)
-                                if (parsed != null) {
-                                    val loc = IntArray(2)
-                                    mainView.getLocationInWindow(loc)
-                                    val cx = loc[0] + (mainView.width / 2f)
-                                    val cy = loc[1] + (mainView.height / 2f)
-                                    MainActivity.triggerLiquidRipple(cx, cy)
-                                    HapticUtil.performHeavyHaptic(mainView)
-                                    receivedContact = parsed
+                        if (activity != null) {
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                com.sameerasw.medrop.utils.MeDropNfcManager.startBroadcast(activity, safeSettings)
+                            }
+                            if (safeSettings.enableReceiving) {
+                                com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { item ->
+                                    processReceivedItem(item)
                                 }
                             }
                         }
                     } else if (event == Lifecycle.Event.ON_PAUSE) {
                         if (activity != null) {
                             com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
+                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                com.sameerasw.medrop.utils.MeDropNfcManager.stopBroadcast(activity)
+                            }
                         }
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
                 if (activity != null) {
                     if (safeSettings.enableReceiving) {
-                        com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { vcardStr ->
-                            val parsed = com.sameerasw.medrop.utils.VCardParser.parse(vcardStr)
-                            if (parsed != null) {
-                                val loc = IntArray(2)
-                                mainView.getLocationInWindow(loc)
-                                val cx = loc[0] + (mainView.width / 2f)
-                                val cy = loc[1] + (mainView.height / 2f)
-                                MainActivity.triggerLiquidRipple(cx, cy)
-                                HapticUtil.performHeavyHaptic(mainView)
-                                receivedContact = parsed
-                            }
+                        com.sameerasw.medrop.utils.MeDropNfcManager.enableReaderMode(activity) { item ->
+                            processReceivedItem(item)
                         }
                     } else {
                         com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
@@ -232,6 +333,9 @@ class MainActivity : AppCompatActivity() {
                     lifecycleOwner.lifecycle.removeObserver(observer)
                     if (activity != null) {
                         com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                            com.sameerasw.medrop.utils.MeDropNfcManager.stopBroadcast(activity)
+                        }
                     }
                 }
             }
@@ -379,7 +483,7 @@ class MainActivity : AppCompatActivity() {
             val toolbarItems = enabledTabs.mapIndexed { index, type ->
                 when (type) {
                     MeDropProfileType.CONTACT -> ToolbarItem(
-                        iconRes = R.drawable.medrop_logo,
+                        iconRes = R.drawable.rounded_share_24,
                         labelRes = R.string.feat_medrop_profile_contact,
                         onClick = {
                             scope.launch {
@@ -409,6 +513,8 @@ class MainActivity : AppCompatActivity() {
             }
 
             val activeProfileType = enabledTabs.getOrNull(pagerState.currentPage) ?: MeDropProfileType.CONTACT
+            val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+            val isKeyboardVisible = imeBottom > 0.dp
 
             MeDropTheme(pitchBlackTheme = isPitchBlackThemeEnabled) {
                 Scaffold(
@@ -437,6 +543,7 @@ class MainActivity : AppCompatActivity() {
                             modifier =
                                 Modifier
                                     .fillMaxSize()
+                                    .imePadding()
                                     .progressiveBlur(
                                         blurRadius = if (isBlurEnabled) 40f else 0f,
                                         height = with(density) { 150.dp.toPx() },
@@ -465,6 +572,16 @@ class MainActivity : AppCompatActivity() {
                             val contentOffsetY = with(density) { (1f - entranceProgress.value) * 300.dp.toPx() }
                             val contentAlpha = entranceProgress.value.coerceIn(0f, 1f)
 
+                            // Ever Drop Share Hub: Options to share text and files
+                            EverDropShareHubUI(
+                                viewModel = viewModel,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                                    .offset { androidx.compose.ui.unit.IntOffset(0, contentOffsetY.toInt()) }
+                                    .graphicsLayer { alpha = contentAlpha }
+                            )
+
                             // Swipeable Fields Area per Tab (smoothly slides up from bottom)
                             if (safeSettings.contact != null) {
                                 HorizontalPager(
@@ -483,36 +600,42 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
 
+                            // Dynamic bottom spacing: Collapses when keyboard is visible to maximize screen space
+                            val bottomSpacerHeight = if (isKeyboardVisible) {
+                                32.dp
+                            } else {
+                                WindowInsets.navigationBars
+                                    .asPaddingValues()
+                                    .calculateBottomPadding() + 150.dp
+                            }
                             Spacer(
-                                modifier =
-                                    Modifier.height(
-                                        WindowInsets.navigationBars
-                                            .asPaddingValues()
-                                            .calculateBottomPadding() + 150.dp,
-                                    ),
+                                modifier = Modifier.height(bottomSpacerHeight),
                             )
                         }
 
-                        val toolbarOffsetY = with(density) { (1f - entranceProgress.value) * 150.dp.toPx() }
-                        val isTileAdded by viewModel.isTileAdded
-                        MeDropFloatingToolbar(
-                            items = toolbarItems,
-                            selectedIndex = pagerState.currentPage.coerceIn(0, toolbarItems.size - 1),
-                            fabIconRes = R.drawable.rounded_settings_24,
-                            fabHasBadge = !isTileAdded,
-                            fabAction = {
-                                HapticUtil.performVirtualKeyHaptic(view)
-                                val intent = Intent(context, SettingsActivity::class.java)
-                                context.startActivity(intent)
-                            },
-                            fabContentDescription = stringResource(R.string.action_settings),
-                            modifier =
-                                Modifier
-                                    .align(Alignment.BottomCenter)
-                                    .offset { androidx.compose.ui.unit.IntOffset(0, toolbarOffsetY.toInt()) }
-                                    .graphicsLayer { alpha = entranceProgress.value }
-                                    .zIndex(1f),
-                        )
+                        // Hide floating toolbar when software keyboard is open so it does not obstruct the text area
+                        if (!isKeyboardVisible) {
+                            val toolbarOffsetY = with(density) { (1f - entranceProgress.value) * 150.dp.toPx() }
+                            val isTileAdded by viewModel.isTileAdded
+                            MeDropFloatingToolbar(
+                                items = toolbarItems,
+                                selectedIndex = pagerState.currentPage.coerceIn(0, toolbarItems.size - 1),
+                                fabIconRes = R.drawable.rounded_settings_24,
+                                fabHasBadge = !isTileAdded,
+                                fabAction = {
+                                    HapticUtil.performVirtualKeyHaptic(view)
+                                    val intent = Intent(context, SettingsActivity::class.java)
+                                    context.startActivity(intent)
+                                },
+                                fabContentDescription = stringResource(R.string.action_settings),
+                                modifier =
+                                    Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .offset { androidx.compose.ui.unit.IntOffset(0, toolbarOffsetY.toInt()) }
+                                        .graphicsLayer { alpha = entranceProgress.value }
+                                        .zIndex(1f),
+                            )
+                        }
                     }
 
                     if (showPermissionsSheet) {
@@ -536,11 +659,20 @@ class MainActivity : AppCompatActivity() {
                         )
                     }
 
-                    receivedContact?.let { contact ->
-                        com.sameerasw.medrop.ui.sheets.ReceivedContactBottomSheet(
-                            contact = contact,
-                            onDismissRequest = { receivedContact = null }
-                        )
+                    when (val item = receivedItem) {
+                        is EverDropItem.Contact -> {
+                            val contact = item.parsed ?: com.sameerasw.medrop.utils.VCardParser.parse(item.vcard)
+                            if (contact != null) {
+                                com.sameerasw.medrop.ui.sheets.ReceivedContactBottomSheet(
+                                    contact = contact,
+                                    onDismissRequest = { receivedItem = null }
+                                )
+                            }
+                        }
+                        null -> {}
+                        else -> {
+                            receivedItem = null
+                        }
                     }
                 }
             }
@@ -550,6 +682,12 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         activeDecorView = window.decorView
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        currentIntent.value = intent
     }
 
     override fun onDestroy() {

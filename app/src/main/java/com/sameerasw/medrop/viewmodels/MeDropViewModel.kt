@@ -20,6 +20,79 @@ class MeDropViewModel : ViewModel() {
     val hasContactsPermission = mutableStateOf(false)
     val isTileAdded = mutableStateOf(false)
 
+    // Ever Drop Share Hub: Staged sharing content (survives UI lifecycle, sheet intake, and rotation)
+    val shareText = mutableStateOf("")
+    val selectedFileUri = mutableStateOf<android.net.Uri?>(null)
+    val selectedFileName = mutableStateOf<String?>(null)
+    val selectedFileSize = mutableStateOf<String?>(null)
+    val selectedFileRawBytes = mutableStateOf(0L)
+    val selectedFileMimeType = mutableStateOf<String?>("*/*")
+
+    /**
+     * Updates typed text to beam. Automatically manages NFC target priority.
+     */
+    fun setShareText(context: Context, text: String) {
+        shareText.value = text
+        if (text.isNotBlank()) {
+            com.sameerasw.medrop.utils.EverDropNfcShareManager.shareText(context, text)
+        } else {
+            val uri = selectedFileUri.value
+            if (uri != null) {
+                com.sameerasw.medrop.utils.EverDropNfcShareManager.shareFile(
+                    context,
+                    uri,
+                    selectedFileName.value ?: "file",
+                    selectedFileMimeType.value ?: "*/*",
+                    selectedFileRawBytes.value
+                )
+            } else {
+                com.sameerasw.medrop.utils.EverDropNfcShareManager.revertToDefault(context)
+            }
+        }
+    }
+
+    /**
+     * Updates selected file to beam. Automatically manages NFC target priority.
+     */
+    fun setSelectedFile(
+        context: Context,
+        uri: android.net.Uri,
+        name: String,
+        sizeStr: String,
+        rawBytes: Long,
+        mimeType: String = "*/*"
+    ) {
+        selectedFileUri.value = uri
+        selectedFileName.value = name
+        selectedFileSize.value = sizeStr
+        selectedFileRawBytes.value = rawBytes
+        selectedFileMimeType.value = mimeType
+        com.sameerasw.medrop.utils.EverDropNfcShareManager.shareFile(context, uri, name, mimeType, rawBytes)
+    }
+
+    /**
+     * Clears staged file and falls back to text if typed, or default contact card if text is empty.
+     */
+    fun clearShareFile(context: Context) {
+        selectedFileUri.value = null
+        selectedFileName.value = null
+        selectedFileSize.value = null
+        selectedFileRawBytes.value = 0L
+        selectedFileMimeType.value = null
+        if (shareText.value.isNotBlank()) {
+            com.sameerasw.medrop.utils.EverDropNfcShareManager.shareText(context, shareText.value)
+        } else {
+            com.sameerasw.medrop.utils.EverDropNfcShareManager.revertToDefault(context)
+        }
+    }
+
+    /**
+     * Clears staged text.
+     */
+    fun clearShareText(context: Context) {
+        setShareText(context, "")
+    }
+
     fun check(context: Context) {
         val repo = MeDropRepository(context)
         isPitchBlackThemeEnabled.value = repo.isPitchBlackThemeEnabled()
@@ -34,7 +107,9 @@ class MeDropViewModel : ViewModel() {
         var added = false
         try {
             val tilesString = android.provider.Settings.Secure.getString(context.contentResolver, "sysui_qs_tiles") ?: ""
-            if (tilesString.contains("com.sameerasw.medrop/.services.tiles.MeDropTileService") ||
+            if (tilesString.contains("${context.packageName}/.services.tiles.MeDropTileService") ||
+                tilesString.contains(context.packageName) ||
+                tilesString.contains("com.coolappstore.everdrop.by.svhp") ||
                 tilesString.contains("com.sameerasw.medrop")
             ) {
                 added = true

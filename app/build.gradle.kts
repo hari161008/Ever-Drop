@@ -23,7 +23,7 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.sameerasw.medrop"
+        applicationId = "com.coolappstore.everdrop.by.svhp"
         minSdk = 26
         targetSdk = 37
         versionCode = 4

@@ -52,25 +52,43 @@ class MeDropHceService : HostApduService() {
 
         private val READ_BINARY_CMD_PREFIX = byteArrayOf(0x00, 0xB0.toByte())
 
-        var pendingVCardBytes: ByteArray? = null
+        var pendingNdefBytes: ByteArray? = null
 
         val isScanActive = kotlinx.coroutines.flow.MutableStateFlow(false)
 
-        private fun ndefWrap(payload: ByteArray): ByteArray {
-            val record = NdefRecord.createMime("text/vcard", payload)
-            val message = NdefMessage(record)
+        private const val EVERDROP_PACKAGE_NAME = "com.coolappstore.everdrop.by.svhp"
+
+        fun prepareNdefMessage(message: NdefMessage) {
             val ndefData = message.toByteArray()
             val nlen = byteArrayOf((ndefData.size shr 8).toByte(), (ndefData.size and 0xFF).toByte())
-            return nlen + ndefData
+            pendingNdefBytes = nlen + ndefData
         }
 
         fun prepareVCard(vcardString: String) {
-            pendingVCardBytes = ndefWrap(vcardString.toByteArray(Charsets.UTF_8))
+            val record = NdefRecord.createMime("text/vcard", vcardString.toByteArray(Charsets.UTF_8))
+            val aarRecord = NdefRecord.createApplicationRecord(EVERDROP_PACKAGE_NAME)
+            prepareNdefMessage(NdefMessage(record, aarRecord))
+        }
+
+        fun prepareText(text: String) {
+            val record = NdefRecord.createMime("text/plain", text.toByteArray(Charsets.UTF_8))
+            val aarRecord = NdefRecord.createApplicationRecord(EVERDROP_PACKAGE_NAME)
+            prepareNdefMessage(NdefMessage(record, aarRecord))
+        }
+
+        fun prepareFile(jsonString: String) {
+            val record = NdefRecord.createMime("application/vnd.everdrop.file", jsonString.toByteArray(Charsets.UTF_8))
+            val aarRecord = NdefRecord.createApplicationRecord(EVERDROP_PACKAGE_NAME)
+            prepareNdefMessage(NdefMessage(record, aarRecord))
+        }
+
+        fun clearNdef() {
+            pendingNdefBytes = null
+            isScanActive.value = false
         }
 
         fun clearVCard() {
-            pendingVCardBytes = null
-            isScanActive.value = false
+            clearNdef()
         }
     }
 
@@ -78,19 +96,28 @@ class MeDropHceService : HostApduService() {
 
     override fun onCreate() {
         super.onCreate()
-        val json = MeDropRepository(this).getMeDropSettingsJson()
-        if (json != null) {
-            try {
-                val settings = Gson().fromJson(json, MeDropSettings::class.java)
-                val contact = settings.contact
-                if (contact != null) {
-                    val activeType = settings.activeProfileType
-                    val activeEntries = settings.getEffectiveEntryIds(activeType)
-                    val photoUri = settings.getEffectivePhotoUri(activeType)
-                    val vcard = contact.toVCard(this, activeEntries, photoUri)
-                    prepareVCard(vcard)
-                }
-            } catch (_: Exception) {}
+        if (pendingNdefBytes == null) {
+            // Strict guard: If file or text is actively being shared, NEVER default to contact card!
+            val activeType = com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.value
+            if (activeType == com.sameerasw.medrop.utils.ShareTargetType.FILE ||
+                activeType == com.sameerasw.medrop.utils.ShareTargetType.TEXT) {
+                return
+            }
+
+            val json = MeDropRepository(this).getMeDropSettingsJson()
+            if (json != null) {
+                try {
+                    val settings = Gson().fromJson(json, MeDropSettings::class.java)
+                    val contact = settings.contact
+                    if (contact != null) {
+                        val activeProfile = settings.activeProfileType
+                        val activeEntries = settings.getEffectiveEntryIds(activeProfile)
+                        val photoUri = settings.getEffectivePhotoUri(activeProfile)
+                        val vcard = contact.toVCard(this, activeEntries, photoUri)
+                        prepareVCard(vcard)
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -113,8 +140,8 @@ class MeDropHceService : HostApduService() {
                         SW_OK
                     }
                     fileId.contentEquals(NDDEF_FILE_ID()) -> {
-                        selectedFile = pendingVCardBytes
-                        SW_OK
+                        selectedFile = pendingNdefBytes
+                        if (selectedFile != null) SW_OK else SW_FILE_NOT_FOUND
                     }
                     else -> SW_FILE_NOT_FOUND
                 }
@@ -135,7 +162,7 @@ class MeDropHceService : HostApduService() {
                     return SW_UNKNOWN_CMD
                 }
 
-                if (selectedFile === pendingVCardBytes) {
+                if (selectedFile === pendingNdefBytes) {
                     if (!isScanActive.value) {
                         isScanActive.value = true
                     }
