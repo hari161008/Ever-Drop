@@ -78,6 +78,7 @@ import com.sameerasw.medrop.ui.components.MeDropFloatingToolbar
 import com.sameerasw.medrop.ui.components.ToolbarItem
 import com.sameerasw.medrop.ui.core.sheets.PermissionItem
 import com.sameerasw.medrop.ui.core.sheets.PermissionsBottomSheet
+import com.sameerasw.medrop.ui.features.EverDropAudioShareUI
 import com.sameerasw.medrop.ui.features.EverDropReceiveUI
 import com.sameerasw.medrop.ui.features.EverDropShareHubUI
 import com.sameerasw.medrop.ui.features.MeDropHeaderUI
@@ -346,7 +347,7 @@ class MainActivity : AppCompatActivity() {
 
             val pagerState = rememberPagerState(
                 initialPage = 0,
-                pageCount = { 2 }
+                pageCount = { 3 }
             )
 
             // Orientation detector: detects screen facing down (share), facing top (receive), or anyhow (both)
@@ -354,6 +355,7 @@ class MainActivity : AppCompatActivity() {
             val facing by orientationDetector.deviceFacing.collectAsState()
 
             val isReceiveTabActive = pagerState.currentPage == 1
+            val isAudioTabActive = pagerState.currentPage == 2
             val isScanActive by com.sameerasw.medrop.services.MeDropHceService.isScanActive.collectAsState()
 
             val hasStagedContent = activeShareType == com.sameerasw.medrop.utils.ShareTargetType.FILE ||
@@ -361,7 +363,7 @@ class MainActivity : AppCompatActivity() {
 
             val shouldShare = if (isScanActive) {
                 true // Maintain broadcast during active APDU session regardless of minor tilts
-            } else if (isReceiveTabActive) {
+            } else if (isReceiveTabActive || isAudioTabActive) {
                 false
             } else if (hasStagedContent) {
                 // When user actively selected a file or text to beam, keep share active
@@ -376,6 +378,8 @@ class MainActivity : AppCompatActivity() {
                 false
             } else if (isReceiveTabActive) {
                 true // Explicitly discoverable & ready to receive on the Receive page
+            } else if (isAudioTabActive) {
+                false
             } else if (safeSettings.orientationShare) {
                 safeSettings.enableReceiving && (facing == DeviceFacing.FACING_UP || facing == DeviceFacing.ANYHOW)
             } else {
@@ -389,6 +393,7 @@ class MainActivity : AppCompatActivity() {
                     } else if (event == Lifecycle.Event.ON_PAUSE) {
                         orientationDetector.stop()
                         com.sameerasw.medrop.utils.EverDropWifiDirectManager.stopPeerDiscovery()
+                        com.sameerasw.medrop.utils.NetworkAudioManager.stopAll()
                         if (activity != null) {
                             com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
                             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -402,6 +407,7 @@ class MainActivity : AppCompatActivity() {
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
                     orientationDetector.stop()
+                    com.sameerasw.medrop.utils.NetworkAudioManager.stopAll()
                     if (activity != null) {
                         com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
                         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -430,7 +436,7 @@ class MainActivity : AppCompatActivity() {
                         currentType == com.sameerasw.medrop.utils.ShareTargetType.TEXT) {
                         viewModel.clearShareFile(context)
                         viewModel.clearShareText(context)
-                        com.sameerasw.medrop.utils.EverDropNfcShareManager.clearShare()
+                        com.sameerasw.medrop.utils.EverDropNfcShareManager.revertToDefault(context)
                         Toast.makeText(context, "Transfer complete", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -447,7 +453,7 @@ class MainActivity : AppCompatActivity() {
                             viewModel.clearShareText(context)
                         }
                     }
-                    com.sameerasw.medrop.utils.EverDropNfcShareManager.clearShare()
+                    com.sameerasw.medrop.utils.EverDropNfcShareManager.revertToDefault(context)
                 }
             }
 
@@ -570,6 +576,15 @@ class MainActivity : AppCompatActivity() {
                             pagerState.animateScrollToPage(1, animationSpec = tween(300))
                         }
                     }
+                ),
+                ToolbarItem(
+                    iconRes = R.drawable.rounded_volume_up_24,
+                    labelRes = R.string.audio_share_section_title,
+                    onClick = {
+                        scope.launch {
+                            pagerState.animateScrollToPage(2, animationSpec = tween(300))
+                        }
+                    }
                 )
             )
 
@@ -652,6 +667,13 @@ class MainActivity : AppCompatActivity() {
                                     1 -> {
                                         // Receive Page: Discoverable status and incoming transfers
                                         EverDropReceiveUI(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                        )
+                                    }
+                                    2 -> {
+                                        // Audio Share: Real-time peer-to-peer audio streaming
+                                        EverDropAudioShareUI(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                         )
@@ -779,6 +801,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        com.sameerasw.medrop.utils.NetworkAudioManager.cleanUp()
         if (activeDecorView === window.decorView) {
             activeDecorView = null
             activeRippleEffect = null

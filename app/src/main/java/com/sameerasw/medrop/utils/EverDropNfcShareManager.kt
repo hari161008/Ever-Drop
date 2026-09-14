@@ -50,19 +50,21 @@ object EverDropNfcShareManager {
 
     /**
      * Staging text to be beamed over NFC.
-     * Sets active target to TEXT and dispatches NDEF text record to HCE service.
+     * Sets active target to TEXT and dispatches NDEF text record to HCE service if no file is staged.
      */
     fun shareText(context: Context, text: String) {
         if (text.isBlank()) {
-            stagedTextPayload = null
-            revertToDefault(context)
+            clearStagedText(context)
             return
         }
         stagedTextPayload = text
-        _activeShareType.value = ShareTargetType.TEXT
-        val preview = if (text.length > 30) text.take(30) + "…" else text
-        _activeShareDetail.value = preview
-        MeDropHceService.prepareText(text)
+        // If no file is staged, activate text beaming
+        if (stagedFilePayloadJson == null) {
+            _activeShareType.value = ShareTargetType.TEXT
+            val preview = if (text.length > 30) text.take(30) + "…" else text
+            _activeShareDetail.value = preview
+            MeDropHceService.prepareText(text)
+        }
     }
 
     /**
@@ -112,16 +114,55 @@ object EverDropNfcShareManager {
     }
 
     /**
+     * Clears staged file and falls back to text if typed, or default contact card if text is empty.
+     */
+    fun clearStagedFile(context: Context) {
+        stagedFilePayloadJson = null
+        val text = stagedTextPayload
+        if (!text.isNullOrBlank()) {
+            _activeShareType.value = ShareTargetType.TEXT
+            val preview = if (text.length > 30) text.take(30) + "…" else text
+            _activeShareDetail.value = preview
+            MeDropHceService.prepareText(text)
+        } else {
+            revertToDefault(context)
+        }
+    }
+
+    /**
+     * Clears staged text and falls back to file if present, or default contact card.
+     */
+    fun clearStagedText(context: Context) {
+        stagedTextPayload = null
+        val fileJson = stagedFilePayloadJson
+        if (!fileJson.isNullOrBlank()) {
+            _activeShareType.value = ShareTargetType.FILE
+            rearmActiveShare(context, null)
+        } else {
+            revertToDefault(context)
+        }
+    }
+
+    /**
      * Share user's contact card.
-     * STRICT GUARD: If a file or text is currently active, DO NOT share or overwrite with contact card!
+     * STRICT GUARD: If a file or text is currently staged, DO NOT share or overwrite with contact card!
      */
     fun shareContact(context: Context, settings: MeDropSettings?) {
-        // Enforce strict priority: Never beam contact card if file or text is staged/active!
-        if (_activeShareType.value == ShareTargetType.FILE || _activeShareType.value == ShareTargetType.TEXT) {
+        // Enforce strict priority: Never beam contact card if file or text is actively staged!
+        if (stagedFilePayloadJson != null || !stagedTextPayload.isNullOrBlank()) {
             return
         }
 
-        val safeSettings = settings ?: return
+        val safeSettings = settings ?: run {
+            val repo = MeDropRepository(context)
+            val json = repo.getMeDropSettingsJson()
+            if (json != null) {
+                try {
+                    Gson().fromJson(json, MeDropSettings::class.java)
+                } catch (_: Exception) { null }
+            } else null
+        } ?: return
+
         val contact = safeSettings.contact
         if (contact == null) {
             clearShare()
@@ -152,23 +193,18 @@ object EverDropNfcShareManager {
      * Called when activity resumes or broadcast starts.
      */
     fun rearmActiveShare(context: Context, settings: MeDropSettings?) {
-        when (_activeShareType.value) {
-            ShareTargetType.FILE -> {
-                val json = stagedFilePayloadJson
-                if (!json.isNullOrBlank()) {
-                    MeDropHceService.prepareFile(json)
-                }
-            }
-            ShareTargetType.TEXT -> {
-                val text = stagedTextPayload
-                if (!text.isNullOrBlank()) {
-                    MeDropHceService.prepareText(text)
-                }
-            }
-            ShareTargetType.CONTACT, ShareTargetType.NONE -> {
-                // If neither file nor text is active, default to contact
-                shareContact(context, settings)
-            }
+        val fileJson = stagedFilePayloadJson
+        val text = stagedTextPayload
+
+        if (!fileJson.isNullOrBlank()) {
+            _activeShareType.value = ShareTargetType.FILE
+            MeDropHceService.prepareFile(fileJson)
+        } else if (!text.isNullOrBlank()) {
+            _activeShareType.value = ShareTargetType.TEXT
+            MeDropHceService.prepareText(text)
+        } else {
+            // Neither file nor text is active, default to contact
+            revertToDefault(context)
         }
     }
 
@@ -204,16 +240,29 @@ object EverDropNfcShareManager {
      * Reverts to default contact card ONLY if both file and text are absent.
      */
     fun revertToDefault(context: Context) {
-        if (_activeShareType.value == ShareTargetType.FILE || _activeShareType.value == ShareTargetType.TEXT) {
+        if (stagedFilePayloadJson != null) {
+            _activeShareType.value = ShareTargetType.FILE
+            rearmActiveShare(context, null)
             return
         }
+        if (!stagedTextPayload.isNullOrBlank()) {
+            _activeShareType.value = ShareTargetType.TEXT
+            val text = stagedTextPayload!!
+            val preview = if (text.length > 30) text.take(30) + "…" else text
+            _activeShareDetail.value = preview
+            MeDropHceService.prepareText(text)
+            return
+        }
+
+        _activeShareType.value = ShareTargetType.NONE
+        _activeShareDetail.value = null
+
         val repo = MeDropRepository(context)
         val json = repo.getMeDropSettingsJson()
         if (json != null) {
             try {
                 val settings = Gson().fromJson(json, MeDropSettings::class.java)
                 if (settings.contact != null) {
-                    _activeShareType.value = ShareTargetType.NONE
                     shareContact(context, settings)
                     return
                 }

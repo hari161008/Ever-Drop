@@ -189,4 +189,26 @@
     <string name="share_contact_beam_active">NFC Active • Beaming Contact</string>
     <string name="share_contact_not_selected">No contact selected to beam</string>
     <string name="share_contact_priority_notice">When files or text are selected, they take priority over your contact card</string>
+
+    <!-- Network Audio Share Strings -->
+    <string name="audio_share_section_title">Audio Share</string>
+    <string name="audio_share_title">Network Audio Share</string>
+    <string name="audio_mode_broadcast">Broadcast</string>
+    <string name="audio_mode_listen">Listen</string>
+    <string name="audio_broadcast_desc">Capture &amp; stream microphone audio to another phone</string>
+    <string name="audio_listen_desc">Receive and play live audio through this phone\'s speaker</string>
+    <string name="audio_discovered_devices">Discovered Listeners</string>
+    <string name="audio_no_devices">Searching for nearby listeners on LAN / Bluetooth…</string>
+    <string name="audio_connect">Connect</string>
+    <string name="audio_disconnect">Disconnect</string>
+    <string name="audio_streaming">Streaming Audio</string>
+    <string name="audio_waiting_listener">Waiting for incoming audio stream…</string>
+    <string name="audio_muted">Muted</string>
+    <string name="audio_unmuted">Live</string>
+    <string name="audio_volume">Volume</string>
+    <string name="audio_bt_fallback_btn">Search Bluetooth</string>
+    <string name="audio_permissions_required">Audio recording and nearby device permissions are required to share audio</string>
+    <string name="audio_grant_permissions">Grant Permissions</string>
+    <string name="audio_wifi_lan">Wi-Fi LAN</string>
+    <string name="audio_bt_rfcomm">Bluetooth</string>
 </resources>

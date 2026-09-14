@@ -36,18 +36,7 @@ class MeDropViewModel : ViewModel() {
         if (text.isNotBlank()) {
             com.sameerasw.medrop.utils.EverDropNfcShareManager.shareText(context, text)
         } else {
-            val uri = selectedFileUri.value
-            if (uri != null) {
-                com.sameerasw.medrop.utils.EverDropNfcShareManager.shareFile(
-                    context,
-                    uri,
-                    selectedFileName.value ?: "file",
-                    selectedFileMimeType.value ?: "*/*",
-                    selectedFileRawBytes.value
-                )
-            } else {
-                com.sameerasw.medrop.utils.EverDropNfcShareManager.revertToDefault(context)
-            }
+            com.sameerasw.medrop.utils.EverDropNfcShareManager.clearStagedText(context)
         }
     }
 
@@ -79,18 +68,15 @@ class MeDropViewModel : ViewModel() {
         selectedFileSize.value = null
         selectedFileRawBytes.value = 0L
         selectedFileMimeType.value = null
-        if (shareText.value.isNotBlank()) {
-            com.sameerasw.medrop.utils.EverDropNfcShareManager.shareText(context, shareText.value)
-        } else {
-            com.sameerasw.medrop.utils.EverDropNfcShareManager.revertToDefault(context)
-        }
+        com.sameerasw.medrop.utils.EverDropNfcShareManager.clearStagedFile(context)
     }
 
     /**
      * Clears staged text.
      */
     fun clearShareText(context: Context) {
-        setShareText(context, "")
+        shareText.value = ""
+        com.sameerasw.medrop.utils.EverDropNfcShareManager.clearStagedText(context)
     }
 
     fun check(context: Context) {

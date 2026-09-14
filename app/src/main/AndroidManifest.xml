@@ -35,6 +35,28 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
+    <!-- Audio Capture & Bluetooth Permissions for Network Audio Share -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="s" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.bluetooth"
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.nfc"
         android:required="false" />
