@@ -211,4 +211,15 @@
     <string name="audio_grant_permissions">Grant Permissions</string>
     <string name="audio_wifi_lan">Wi-Fi LAN</string>
     <string name="audio_bt_rfcomm">Bluetooth</string>
+
+    <!-- Walkie Talkie & Live Chat Strings -->
+    <string name="audio_mode_talkie">Walkie-Talkie</string>
+    <string name="audio_talkie_desc">Full-duplex real-time voice &amp; chat with nearby peers</string>
+    <string name="chat_title">Live Chat</string>
+    <string name="chat_hint">Type a message…</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_no_messages">No messages yet. Say hello!</string>
+    <string name="audio_mic_on">Microphone On</string>
+    <string name="audio_mic_muted">Microphone Muted</string>
+    <string name="audio_talk_button">Hold to Talk</string>
 </resources>

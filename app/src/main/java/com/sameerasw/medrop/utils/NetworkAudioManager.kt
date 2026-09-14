@@ -76,8 +76,13 @@ object NetworkAudioManager {
     private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
     private const val CHUNK_SIZE = 640 // 20ms of 16kHz 16-bit mono = 320 samples * 2 bytes = 640 bytes
 
+    // Packet Multiplexing Types (Mobile Talkie protocol model)
+    private const val PACKET_TYPE_AUDIO: Byte = 0x01
+    private const val PACKET_TYPE_CHAT: Byte = 0x02
+    private const val PACKET_TYPE_CONTROL: Byte = 0x03
+
     // State flows
-    private val _currentMode = MutableStateFlow(AudioShareMode.BROADCAST)
+    private val _currentMode = MutableStateFlow(AudioShareMode.TALKIE)
     val currentMode: StateFlow<AudioShareMode> = _currentMode.asStateFlow()
 
     private val _connectionState = MutableStateFlow<AudioConnectionState>(AudioConnectionState.Idle)
@@ -86,14 +91,21 @@ object NetworkAudioManager {
     private val _discoveredDevices = MutableStateFlow<List<AudioDiscoveredDevice>>(emptyList())
     val discoveredDevices: StateFlow<List<AudioDiscoveredDevice>> = _discoveredDevices.asStateFlow()
 
-    private val _isMuted = MutableStateFlow(false)
+    private val _isMuted = MutableStateFlow(false) // Microphone mute
     val isMuted: StateFlow<Boolean> = _isMuted.asStateFlow()
+
+    private val _isSpeakerMuted = MutableStateFlow(false) // Speaker mute
+    val isSpeakerMuted: StateFlow<Boolean> = _isSpeakerMuted.asStateFlow()
 
     private val _volume = MutableStateFlow(1.0f) // 0.0 to 1.0
     val volume: StateFlow<Float> = _volume.asStateFlow()
 
     private val _isBluetoothFallbackAvailable = MutableStateFlow(false)
     val isBluetoothFallbackAvailable: StateFlow<Boolean> = _isBluetoothFallbackAvailable.asStateFlow()
+
+    // Live In-App P2P Chat Messages
+    private val _chatMessages = MutableStateFlow<List<com.sameerasw.medrop.domain.model.P2pChatMessage>>(emptyList())
+    val chatMessages: StateFlow<List<com.sameerasw.medrop.domain.model.P2pChatMessage>> = _chatMessages.asStateFlow()
 
     // Internal resources
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -121,6 +133,8 @@ object NetworkAudioManager {
 
     // Coroutine Jobs
     private var streamingJob: Job? = null
+    private var senderAudioJob: Job? = null
+    private var receiverAudioJob: Job? = null
     private var serverAcceptJob: Job? = null
     private var discoveryTimeoutJob: Job? = null
 
@@ -143,7 +157,7 @@ object NetworkAudioManager {
     }
 
     /**
-     * Switch operating mode: BROADCAST (Sender) vs LISTEN (Receiver)
+     * Switch operating mode: TALKIE (Walkie-Talkie), BROADCAST (Sender), LISTEN (Receiver)
      */
     fun setMode(mode: AudioShareMode) {
         if (_currentMode.value == mode && _connectionState.value !is AudioConnectionState.Error) {
@@ -152,8 +166,90 @@ object NetworkAudioManager {
         stopAll()
         _currentMode.value = mode
         when (mode) {
+            AudioShareMode.TALKIE -> startTalkieMode()
             AudioShareMode.LISTEN -> startListenMode()
             AudioShareMode.BROADCAST -> startBroadcastMode()
+        }
+    }
+
+    /**
+     * Start Walkie-Talkie Mode (Duplex Talk & Listen + Live Chat):
+     * - Advertises NSD service and Wi-Fi Direct listen socket
+     * - Simultaneously discovers nearby peers on Wi-Fi Direct and LAN
+     * - Whoever connects first establishes bidirectional symmetric audio & chat!
+     */
+    fun startTalkieMode() {
+        stopAll()
+        _currentMode.value = AudioShareMode.TALKIE
+        _connectionState.value = AudioConnectionState.Advertising
+        _discoveredDevices.value = emptyList()
+        _isBluetoothFallbackAvailable.value = false
+
+        val context = appContext ?: return
+        val deviceName = Build.MODEL ?: "Android Device"
+
+        // 1. Start TCP ServerSocket
+        try {
+            val tcpServer = ServerSocket(0)
+            serverSocket = tcpServer
+            val localPort = tcpServer.localPort
+
+            // 2. Register NSD Service
+            val serviceInfo = NsdServiceInfo().apply {
+                serviceName = "$DEFAULT_SERVICE_NAME-$deviceName"
+                serviceType = SERVICE_TYPE
+                port = localPort
+            }
+
+            registrationListener = object : NsdManager.RegistrationListener {
+                override fun onServiceRegistered(service: NsdServiceInfo?) {
+                    isNsdRegistered = true
+                    Log.d(TAG, "Talkie NSD registered on port $localPort")
+                }
+                override fun onRegistrationFailed(service: NsdServiceInfo?, errorCode: Int) {
+                    isNsdRegistered = false
+                }
+                override fun onServiceUnregistered(service: NsdServiceInfo?) {
+                    isNsdRegistered = false
+                }
+                override fun onUnregistrationFailed(service: NsdServiceInfo?, errorCode: Int) {
+                    isNsdRegistered = false
+                }
+            }
+
+            try {
+                nsdManager?.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, registrationListener)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error registering Talkie NSD: ${e.message}")
+            }
+
+            // 3. Fallback Bluetooth Server
+            startBluetoothServer()
+
+            // 4. Wi-Fi Direct P2P Listen & Discover
+            startWifiP2pListenMode()
+            startNsdDiscovery()
+            startWifiP2pBroadcastDiscovery()
+
+            // 5. Accept incoming TCP connection for Duplex Talkie
+            serverAcceptJob = scope.launch {
+                try {
+                    val socket = tcpServer.accept()
+                    activeSocket = socket
+                    activeInputStream = socket.getInputStream()
+                    activeOutputStream = socket.getOutputStream()
+                    val remoteName = socket.inetAddress.hostAddress ?: "Walkie-Talkie Peer"
+                    _connectionState.value = AudioConnectionState.Connected(remoteName, AudioTransportType.WIFI_LAN)
+                    startDuplexTalkiePipeline(remoteName, AudioTransportType.WIFI_LAN)
+                } catch (e: Exception) {
+                    if (isActive) {
+                        Log.e(TAG, "Talkie server accept error: ${e.message}")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start talkie mode: ${e.message}")
+            _connectionState.value = AudioConnectionState.Error("Failed to start walkie-talkie: ${e.message}")
         }
     }
 
@@ -225,7 +321,7 @@ object NetworkAudioManager {
                     activeOutputStream = socket.getOutputStream()
                     val remoteName = socket.inetAddress.hostAddress ?: "Sender"
                     _connectionState.value = AudioConnectionState.Connected(remoteName, AudioTransportType.WIFI_LAN)
-                    startReceiverAudioPipeline(remoteName, AudioTransportType.WIFI_LAN)
+                    startDuplexTalkiePipeline(remoteName, AudioTransportType.WIFI_LAN)
                 } catch (e: Exception) {
                     if (isActive) {
                         Log.e(TAG, "Server accept error: ${e.message}")
@@ -258,7 +354,7 @@ object NetworkAudioManager {
                     activeOutputStream = btSocket.outputStream
                     val remoteName = btSocket.remoteDevice?.name ?: "Bluetooth Sender"
                     _connectionState.value = AudioConnectionState.Connected(remoteName, AudioTransportType.BLUETOOTH_RFCOMM)
-                    startReceiverAudioPipeline(remoteName, AudioTransportType.BLUETOOTH_RFCOMM)
+                    startDuplexTalkiePipeline(remoteName, AudioTransportType.BLUETOOTH_RFCOMM)
                 }
             } catch (e: Exception) {
                 Log.d(TAG, "Bluetooth server ended: ${e.message}")
@@ -468,7 +564,7 @@ object NetworkAudioManager {
                         activeInputStream = socket.getInputStream()
                         activeOutputStream = socket.getOutputStream()
                         _connectionState.value = AudioConnectionState.Connected(device.name, AudioTransportType.WIFI_LAN)
-                        startSenderAudioPipeline(device.name, AudioTransportType.WIFI_LAN)
+                        startDuplexTalkiePipeline(device.name, AudioTransportType.WIFI_LAN)
                     }
                     AudioTransportType.BLUETOOTH_RFCOMM -> {
                         val btDev = device.bluetoothDevice ?: throw IllegalArgumentException("Bluetooth device is null")
@@ -478,7 +574,7 @@ object NetworkAudioManager {
                         activeInputStream = socket.inputStream
                         activeOutputStream = socket.outputStream
                         _connectionState.value = AudioConnectionState.Connected(device.name, AudioTransportType.BLUETOOTH_RFCOMM)
-                        startSenderAudioPipeline(device.name, AudioTransportType.BLUETOOTH_RFCOMM)
+                        startDuplexTalkiePipeline(device.name, AudioTransportType.BLUETOOTH_RFCOMM)
                     }
                 }
             } catch (e: Exception) {
@@ -503,7 +599,7 @@ object NetworkAudioManager {
                 val action = intent?.action ?: return
                 when (action) {
                     WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                        if (!isListenMode) {
+                        if (!isListenMode || _currentMode.value == AudioShareMode.TALKIE) {
                             wifiP2pConnection?.requestPeers { peers ->
                                 val p2pDevices = peers.map { dev ->
                                     AudioDiscoveredDevice(
@@ -550,16 +646,17 @@ object NetworkAudioManager {
                     activeSocket = socket
                     activeInputStream = socket.getInputStream()
                     activeOutputStream = socket.getOutputStream()
-                    if (isListenMode) {
-                        val remoteName = if (info.isGroupOwner) "Wi-Fi Direct Sender" else "Wi-Fi Direct Host"
-                        _connectionState.value = AudioConnectionState.Connected(remoteName, AudioTransportType.WIFI_P2P)
-                        startReceiverAudioPipeline(remoteName, AudioTransportType.WIFI_P2P)
-                    } else {
-                        val targetName = pendingP2pConnectDevice?.name ?: "Wi-Fi Direct Peer"
+                    val remoteName = if (pendingP2pConnectDevice != null) {
+                        val n = pendingP2pConnectDevice?.name ?: "Wi-Fi Direct Peer"
                         pendingP2pConnectDevice = null
-                        _connectionState.value = AudioConnectionState.Connected(targetName, AudioTransportType.WIFI_P2P)
-                        startSenderAudioPipeline(targetName, AudioTransportType.WIFI_P2P)
+                        n
+                    } else if (info.isGroupOwner) {
+                        "Wi-Fi Direct Peer"
+                    } else {
+                        "Wi-Fi Direct Host"
                     }
+                    _connectionState.value = AudioConnectionState.Connected(remoteName, AudioTransportType.WIFI_P2P)
+                    startDuplexTalkiePipeline(remoteName, AudioTransportType.WIFI_P2P)
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Wi-Fi P2P audio socket error: ${e.message}")
@@ -601,12 +698,32 @@ object NetworkAudioManager {
     }
 
     /**
-     * Sender Audio Pipeline:
-     * - AudioRecord captures 16kHz 16-bit mono PCM from microphone
-     * - Prepends 4-byte length header per chunk
-     * - Sends over socket stream
+     * Unified Full-Duplex Walkie-Talkie & Chat Pipeline:
+     * - Captures microphone audio and transmits PACKET_TYPE_AUDIO (0x01)
+     * - Receives PACKET_TYPE_AUDIO and plays out through speaker via AudioTrack & jitter buffer
+     * - Receives PACKET_TYPE_CHAT (0x02) and decodes live incoming chat messages into _chatMessages
+     * - Both phones can talk and hear each other simultaneously without switching modes!
      */
-    private fun startSenderAudioPipeline(deviceName: String, transport: AudioTransportType) {
+    private fun startDuplexTalkiePipeline(deviceName: String, transport: AudioTransportType) {
+        stopAudioPipelines()
+        _connectionState.value = AudioConnectionState.Streaming(
+            deviceName = deviceName,
+            transport = transport,
+            isMuted = _isMuted.value,
+            isDuplex = true
+        )
+
+        // Start playback pipeline
+        startDuplexAudioPlayback()
+
+        // Start incoming packet reader (Audio + Chat multiplexer)
+        startDuplexPacketReceiver()
+
+        // Start microphone capture pipeline
+        startDuplexAudioCapture()
+    }
+
+    private fun startDuplexAudioCapture() {
         val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_IN, ENCODING)
         val bufferSize = maxOf(minBufferSize, CHUNK_SIZE * 4)
 
@@ -620,7 +737,7 @@ object NetworkAudioManager {
             )
 
             if (record.state != AudioRecord.STATE_INITIALIZED) {
-                _connectionState.value = AudioConnectionState.Error("AudioRecord initialization failed")
+                Log.e(TAG, "AudioRecord initialization failed")
                 return
             }
 
@@ -643,12 +760,11 @@ object NetworkAudioManager {
             }
 
             record.startRecording()
-            _connectionState.value = AudioConnectionState.Streaming(deviceName, transport, _isMuted.value)
 
             val outStream = activeOutputStream ?: return
             val dataOut = DataOutputStream(outStream)
 
-            streamingJob = scope.launch(Dispatchers.IO) {
+            senderAudioJob = scope.launch(Dispatchers.IO) {
                 val pcmBuffer = ByteArray(CHUNK_SIZE)
                 val silentBuffer = ByteArray(CHUNK_SIZE)
 
@@ -656,39 +772,37 @@ object NetworkAudioManager {
                     while (isActive) {
                         val bytesRead = record.read(pcmBuffer, 0, pcmBuffer.size)
                         if (bytesRead > 0) {
-                            // If muted, send silence (zeros) so connection stays alive without transmitting audio
                             val dataToSend = if (_isMuted.value) silentBuffer else pcmBuffer
-                            dataOut.writeInt(bytesRead)
-                            dataOut.write(dataToSend, 0, bytesRead)
-                            dataOut.flush()
+                            synchronized(outStream) {
+                                // Packet Header: [Type (Byte)][Length (Int)][Payload]
+                                dataOut.writeByte(PACKET_TYPE_AUDIO.toInt())
+                                dataOut.writeInt(bytesRead)
+                                dataOut.write(dataToSend, 0, bytesRead)
+                                dataOut.flush()
+                            }
                         }
                     }
                 } catch (e: Exception) {
                     if (isActive) {
-                        Log.e(TAG, "Streaming send error: ${e.message}")
-                        _connectionState.value = AudioConnectionState.Error("Stream disconnected: ${e.message}")
+                        Log.e(TAG, "Duplex audio send error: ${e.message}")
+                        _connectionState.value = AudioConnectionState.Error("Audio send error: ${e.message}")
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed starting sender audio: ${e.message}")
-            _connectionState.value = AudioConnectionState.Error("Microphone error: ${e.message}")
+            Log.e(TAG, "Failed starting mic capture: ${e.message}")
         }
     }
 
-    /**
-     * Receiver Audio Pipeline:
-     * - Reads length-prefixed chunks from stream
-     * - Buffers chunks in queue to absorb network jitter
-     * - AudioTrack streams audio to speaker
-     */
-    private fun startReceiverAudioPipeline(deviceName: String, transport: AudioTransportType) {
+    private val jitterBuffer = LinkedBlockingQueue<ByteArray>(25)
+
+    private fun startDuplexAudioPlayback() {
         val minBufferSize = AudioTrack.getMinBufferSize(SAMPLE_RATE, CHANNEL_OUT, ENCODING)
         val bufferSize = maxOf(minBufferSize, CHUNK_SIZE * 6)
 
         try {
             val audioAttributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_MEDIA)
+                .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                 .build()
 
@@ -707,74 +821,130 @@ object NetworkAudioManager {
             )
 
             if (track.state != AudioTrack.STATE_INITIALIZED) {
-                _connectionState.value = AudioConnectionState.Error("AudioTrack initialization failed")
+                Log.e(TAG, "AudioTrack initialization failed")
                 return
             }
 
             audioTrack = track
             updateVolumeInternal()
             track.play()
-            _connectionState.value = AudioConnectionState.Streaming(deviceName, transport, _isMuted.value)
 
-            val inStream = activeInputStream ?: return
-            val dataIn = DataInputStream(inStream)
-            val jitterBuffer = LinkedBlockingQueue<ByteArray>(20)
-
-            // Audio reading coroutine
+            // Playback thread consuming jitter buffer
             streamingJob = scope.launch(Dispatchers.IO) {
-                val playbackJob = launch(Dispatchers.IO) {
-                    try {
-                        while (isActive) {
-                            val chunk = jitterBuffer.poll()
-                            if (chunk != null) {
-                                track.write(chunk, 0, chunk.size)
-                            } else {
-                                delay(5)
-                            }
-                        }
-                    } catch (_: Exception) {}
-                }
-
                 try {
                     while (isActive) {
-                        val length = dataIn.readInt()
-                        if (length in 1..(64 * 1024)) {
-                            val buffer = ByteArray(length)
-                            dataIn.readFully(buffer)
-                            // Offer to jitter buffer (drops oldest if full to avoid lag buildup)
-                            if (!jitterBuffer.offer(buffer)) {
-                                jitterBuffer.poll()
-                                jitterBuffer.offer(buffer)
+                        val chunk = jitterBuffer.poll()
+                        if (chunk != null) {
+                            if (!_isSpeakerMuted.value) {
+                                track.write(chunk, 0, chunk.size)
                             }
                         } else {
-                            break
+                            delay(5)
                         }
                     }
-                } catch (e: Exception) {
-                    if (isActive) {
-                        Log.e(TAG, "Stream read error: ${e.message}")
-                        _connectionState.value = AudioConnectionState.Error("Stream ended: ${e.message}")
-                    }
-                } finally {
-                    playbackJob.cancel()
-                }
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed starting receiver audio: ${e.message}")
-            _connectionState.value = AudioConnectionState.Error("Playback error: ${e.message}")
+            Log.e(TAG, "Failed starting audio playback: ${e.message}")
+        }
+    }
+
+    private fun startDuplexPacketReceiver() {
+        val inStream = activeInputStream ?: return
+        val dataIn = DataInputStream(inStream)
+
+        receiverAudioJob = scope.launch(Dispatchers.IO) {
+            try {
+                while (isActive) {
+                    val packetType = dataIn.readByte()
+                    val length = dataIn.readInt()
+                    if (length in 1..(256 * 1024)) {
+                        val payload = ByteArray(length)
+                        dataIn.readFully(payload)
+
+                        when (packetType) {
+                            PACKET_TYPE_AUDIO -> {
+                                // Offer PCM chunk to jitter buffer
+                                if (!jitterBuffer.offer(payload)) {
+                                    jitterBuffer.poll()
+                                    jitterBuffer.offer(payload)
+                                }
+                            }
+                            PACKET_TYPE_CHAT -> {
+                                val chatText = String(payload, Charsets.UTF_8)
+                                val current = _connectionState.value
+                                val sender = if (current is AudioConnectionState.Streaming) current.deviceName else "Peer"
+                                val newMsg = com.sameerasw.medrop.domain.model.P2pChatMessage(
+                                    senderName = sender,
+                                    message = chatText,
+                                    isFromMe = false
+                                )
+                                val updated = _chatMessages.value.toMutableList().apply { add(newMsg) }
+                                _chatMessages.value = updated
+                            }
+                        }
+                    } else {
+                        break
+                    }
+                }
+            } catch (e: Exception) {
+                if (isActive) {
+                    Log.e(TAG, "Duplex stream read error: ${e.message}")
+                    _connectionState.value = AudioConnectionState.Error("Connection ended: ${e.message}")
+                }
+            }
         }
     }
 
     /**
-     * Toggle Mute (Microphone on sender, Speaker on receiver)
+     * Send a Live In-App Chat message across the active duplex connection
+     */
+    fun sendChatMessage(message: String): Boolean {
+        if (message.isBlank()) return false
+        val outStream = activeOutputStream ?: return false
+        val myDeviceName = Build.MODEL ?: "Me"
+
+        return try {
+            val payload = message.toByteArray(Charsets.UTF_8)
+            val dataOut = DataOutputStream(outStream)
+            synchronized(outStream) {
+                dataOut.writeByte(PACKET_TYPE_CHAT.toInt())
+                dataOut.writeInt(payload.size)
+                dataOut.write(payload)
+                dataOut.flush()
+            }
+
+            val msg = com.sameerasw.medrop.domain.model.P2pChatMessage(
+                senderName = myDeviceName,
+                message = message,
+                isFromMe = true
+            )
+            val updated = _chatMessages.value.toMutableList().apply { add(msg) }
+            _chatMessages.value = updated
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error sending chat message: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Toggle Microphone Mute
      */
     fun toggleMute() {
         _isMuted.value = !_isMuted.value
-        updateVolumeInternal()
         val current = _connectionState.value
         if (current is AudioConnectionState.Streaming) {
             _connectionState.value = current.copy(isMuted = _isMuted.value)
         }
+    }
+
+    /**
+     * Toggle Speaker Mute
+     */
+    fun toggleSpeakerMute() {
+        _isSpeakerMuted.value = !_isSpeakerMuted.value
+        updateVolumeInternal()
     }
 
     /**
@@ -786,7 +956,7 @@ object NetworkAudioManager {
     }
 
     private fun updateVolumeInternal() {
-        val effectiveVolume = if (_isMuted.value) 0.0f else _volume.value
+        val effectiveVolume = if (_isSpeakerMuted.value) 0.0f else _volume.value
         try {
             audioTrack?.setVolume(effectiveVolume)
         } catch (_: Exception) {}
@@ -798,9 +968,11 @@ object NetworkAudioManager {
     fun disconnect() {
         stopAudioPipelines()
         closeSockets()
+        _chatMessages.value = emptyList()
         _connectionState.value = AudioConnectionState.Idle
         // Re-arm mode state
         when (_currentMode.value) {
+            AudioShareMode.TALKIE -> startTalkieMode()
             AudioShareMode.BROADCAST -> startBroadcastMode()
             AudioShareMode.LISTEN -> startListenMode()
         }
@@ -809,6 +981,11 @@ object NetworkAudioManager {
     private fun stopAudioPipelines() {
         streamingJob?.cancel()
         streamingJob = null
+        senderAudioJob?.cancel()
+        senderAudioJob = null
+        receiverAudioJob?.cancel()
+        receiverAudioJob = null
+        jitterBuffer.clear()
 
         try {
             audioRecord?.stop()

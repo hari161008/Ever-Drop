@@ -798,10 +798,13 @@ object EverDropWifiDirectManager {
 
             val socketDeferred = kotlinx.coroutines.CompletableDeferred<Socket>()
 
-            // 1. Accept incoming reverse connection from receiver client
+            // 1. Accept incoming reverse connection from receiver client (Mobile Talkie pattern)
             val acceptJob = launch {
                 try {
-                    val s = server.accept()
+                    val s = server.accept().apply {
+                        keepAlive = true
+                        tcpNoDelay = true
+                    }
                     if (!socketDeferred.isCompleted) {
                         socketDeferred.complete(s)
                     } else {
@@ -810,18 +813,21 @@ object EverDropWifiDirectManager {
                 } catch (_: Exception) {}
             }
 
-            // 2. Concurrently attempt connecting to typical Wi-Fi Direct client DHCP addresses (192.168.49.2 .. 192.168.49.20)
+            // 2. Concurrently attempt connecting to typical Wi-Fi Direct client DHCP addresses (192.168.49.2 .. 192.168.49.10)
             val scanJob = launch {
-                delay(1800L) // Give receiver a moment to initiate reverse connect
+                delay(1200L) // Give receiver a moment to initiate reverse connect
                 val baseSubnet = "192.168.49."
-                for (lastOctet in 2..20) {
+                for (lastOctet in 2..10) {
                     if (socketDeferred.isCompleted || !isActive) break
                     val target = "$baseSubnet$lastOctet"
                     launch {
                         try {
-                            val client = Socket()
-                            client.reuseAddress = true
-                            client.connect(InetSocketAddress(target, port), 1500)
+                            val client = Socket().apply {
+                                reuseAddress = true
+                                keepAlive = true
+                                tcpNoDelay = true
+                            }
+                            client.connect(InetSocketAddress(target, port), 1200)
                             if (!socketDeferred.isCompleted) {
                                 socketDeferred.complete(client)
                             } else {
