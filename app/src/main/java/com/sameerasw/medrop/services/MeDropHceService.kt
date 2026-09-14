@@ -1,5 +1,7 @@
 package com.sameerasw.medrop.services
 
+import android.content.Context
+import android.os.Build
 import android.nfc.NdefMessage
 import android.nfc.NdefRecord
 import android.nfc.cardemulation.HostApduService
@@ -89,6 +91,12 @@ class MeDropHceService : HostApduService() {
             prepareNdefMessage(NdefMessage(record, aarRecord))
         }
 
+        fun prepareP2pHandover(jsonString: String) {
+            val record = NdefRecord.createMime("application/vnd.everdrop.p2p_handover", jsonString.toByteArray(Charsets.UTF_8))
+            val aarRecord = NdefRecord.createApplicationRecord(EVERDROP_PACKAGE_NAME)
+            prepareNdefMessage(NdefMessage(record, aarRecord))
+        }
+
         fun clearNdef() {
             pendingNdefBytes = null
             isScanActive.value = false
@@ -136,7 +144,8 @@ class MeDropHceService : HostApduService() {
         ensureDefaultContactLoaded(this)
         if (commandApdu.size < 4) return SW_UNKNOWN_CMD
 
-        if (!isSharingAllowed && !isScanActive.value) {
+        // Do not reject in background if pending payload or contact is available
+        if (pendingNdefBytes == null) {
             return SW_FILE_NOT_FOUND
         }
 
@@ -188,6 +197,15 @@ class MeDropHceService : HostApduService() {
 
                     if (offset + length >= data.size) {
                         onTransferCompleted.tryEmit(Unit)
+                        try {
+                            val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(150, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                            } else {
+                                @Suppress("DEPRECATION")
+                                vibrator?.vibrate(150)
+                            }
+                        } catch (_: Exception) {}
                     }
                 }
                 

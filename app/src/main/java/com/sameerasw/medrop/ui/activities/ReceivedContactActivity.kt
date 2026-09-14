@@ -110,6 +110,16 @@ class ReceivedContactActivity : ComponentActivity() {
                 currentItem.value = parsedItem
                 setupUI()
             }
+            is EverDropItem.P2pHandover -> {
+                Toast.makeText(
+                    applicationContext,
+                    "NFC Handover: ${parsedItem.deviceName} sharing ${parsedItem.payloadName}",
+                    Toast.LENGTH_LONG
+                ).show()
+                com.sameerasw.medrop.utils.EverDropWifiDirectManager.startDiscoverableReceiver(applicationContext)
+                finish()
+                return
+            }
         }
     }
 

@@ -91,6 +91,7 @@ fun EverDropReceiveUI(
     val thisDeviceName by EverDropWifiDirectManager.thisDeviceName.collectAsState()
     val isReceiverActive by EverDropWifiDirectManager.isReceiverActive.collectAsState()
     val transferProgress by EverDropWifiDirectManager.transferProgress.collectAsState()
+    val incomingRequest by EverDropWifiDirectManager.incomingRequest.collectAsState()
     val receiverGroupInfo by EverDropWifiDirectManager.receiverGroupInfo.collectAsState()
     var showQrDialog by remember { mutableStateOf(false) }
 
@@ -121,7 +122,7 @@ fun EverDropReceiveUI(
             EverDropWifiDirectManager.startDiscoverableReceiver(context)
         }
         onDispose {
-            EverDropWifiDirectManager.stopDiscoverableReceiver()
+            // Receiver stays discoverable across the app as managed by MainActivity
         }
     }
 
@@ -219,11 +220,12 @@ fun EverDropReceiveUI(
             }
         }
 
-        // Live Incoming / Active Transfer Card
+        // Live Incoming / Active Transfer Card (Receiver only)
         AnimatedVisibility(
-            visible = transferProgress.status == TransferProgressStatus.RECEIVING ||
-                    transferProgress.status == TransferProgressStatus.COMPLETED ||
-                    transferProgress.status == TransferProgressStatus.FAILED
+            visible = incomingRequest != null ||
+                    (transferProgress.status == TransferProgressStatus.RECEIVING && transferProgress.payloadType != null) ||
+                    (transferProgress.status == TransferProgressStatus.COMPLETED && (transferProgress.receivedFileUri != null || transferProgress.receivedText != null)) ||
+                    (transferProgress.status == TransferProgressStatus.FAILED && incomingRequest != null)
         ) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -233,6 +235,8 @@ fun EverDropReceiveUI(
                         MaterialTheme.colorScheme.primaryContainer
                     } else if (transferProgress.status == TransferProgressStatus.FAILED) {
                         MaterialTheme.colorScheme.errorContainer
+                    } else if (incomingRequest != null) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
                     } else {
                         MaterialTheme.colorScheme.surfaceContainerHigh
                     }
@@ -244,6 +248,10 @@ fun EverDropReceiveUI(
                         .padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    val displayName = incomingRequest?.name ?: transferProgress.payloadName ?: "Ever Drop Transfer"
+                    val senderName = incomingRequest?.senderName ?: transferProgress.senderName ?: "Nearby Phone"
+                    val currentType = incomingRequest?.type ?: transferProgress.payloadType
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -251,7 +259,8 @@ fun EverDropReceiveUI(
                         val iconRes = when (transferProgress.status) {
                             TransferProgressStatus.COMPLETED -> R.drawable.rounded_check_24
                             TransferProgressStatus.FAILED -> R.drawable.rounded_remove_24
-                            else -> if (transferProgress.payloadType == TransferType.TEXT) R.drawable.rounded_edit_24 else R.drawable.rounded_app_registration_24
+                            TransferProgressStatus.WAITING_CONFIRMATION -> R.drawable.rounded_share_24
+                            else -> if (currentType == TransferType.TEXT) R.drawable.rounded_edit_24 else R.drawable.rounded_app_registration_24
                         }
                         Box(
                             modifier = Modifier
@@ -269,21 +278,57 @@ fun EverDropReceiveUI(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = if (transferProgress.status == TransferProgressStatus.RECEIVING) {
+                                text = if (incomingRequest != null) {
+                                    stringResource(R.string.transfer_wants_to_share, senderName)
+                                } else if (transferProgress.status == TransferProgressStatus.RECEIVING) {
                                     stringResource(R.string.receive_incoming_transfer)
                                 } else {
-                                    transferProgress.payloadName ?: "Ever Drop Transfer"
+                                    displayName
                                 },
                                 style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = transferProgress.message ?: "",
+                                text = if (incomingRequest != null) {
+                                    displayName
+                                } else {
+                                    transferProgress.message ?: ""
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
+                        }
+                    }
+
+                    // Confirmation Buttons when waiting for recipient decision
+                    if (incomingRequest != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = {
+                                    EverDropWifiDirectManager.acceptIncomingTransfer(context)
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = MaterialTheme.shapes.medium
+                            ) {
+                                Text(stringResource(R.string.transfer_action_receive))
+                            }
+
+                            OutlinedButton(
+                                onClick = {
+                                    EverDropWifiDirectManager.rejectIncomingTransfer(context)
+                                },
+                                modifier = Modifier.weight(1f),
+                                shape = MaterialTheme.shapes.medium
+                            ) {
+                                Text(stringResource(R.string.transfer_action_cancel))
+                            }
                         }
                     }
 
@@ -564,6 +609,13 @@ fun EverDropReceiveUI(
 
         // Direct Connect QR Dialog
         if (showQrDialog) {
+            DisposableEffect(Unit) {
+                EverDropWifiDirectManager.startQrDirectGroup()
+                onDispose {
+                    EverDropWifiDirectManager.stopQrDirectGroup(context)
+                }
+            }
+
             val group = receiverGroupInfo
             val qrContent = if (group != null && group.networkName.isNotEmpty()) {
                 "WIFI:S:${group.networkName};T:WPA;P:${group.passphrase};;"

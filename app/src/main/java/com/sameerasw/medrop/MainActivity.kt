@@ -155,15 +155,43 @@ class MainActivity : AppCompatActivity() {
             val context = LocalContext.current
             val viewModel: MeDropViewModel = viewModel()
 
+            val isPitchBlackThemeEnabled by viewModel.isPitchBlackThemeEnabled
+            val isBlurEnabled by viewModel.isBlurEnabled
+            val hasContactsPerm by viewModel.hasContactsPermission
+            val settings by viewModel.meDropSettings
+            val safeSettings = settings ?: MeDropSettings()
+
             val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
+            DisposableEffect(lifecycleOwner, safeSettings.enableReceiving) {
                 val observer =
                     LifecycleEventObserver { _, event ->
-                        if (event == Lifecycle.Event.ON_RESUME) {
-                            viewModel.check(context)
+                        when (event) {
+                            Lifecycle.Event.ON_RESUME -> {
+                                com.sameerasw.medrop.utils.EverDropWifiDirectManager.isAppInForeground = true
+                                if (!com.sameerasw.medrop.utils.EverDropWifiDirectManager.isTransferBusy()) {
+                                    com.sameerasw.medrop.services.EverDropReceiveService.stop(context)
+                                }
+                                if (safeSettings.enableReceiving) {
+                                    com.sameerasw.medrop.utils.EverDropWifiDirectManager.startDiscoverableReceiver(context)
+                                }
+                                viewModel.check(context)
+                            }
+                            Lifecycle.Event.ON_PAUSE -> {
+                                com.sameerasw.medrop.utils.EverDropWifiDirectManager.isAppInForeground = false
+                                if (safeSettings.enableReceiving) {
+                                    com.sameerasw.medrop.services.EverDropReceiveService.start(context)
+                                }
+                            }
+                            Lifecycle.Event.ON_DESTROY -> {
+                                com.sameerasw.medrop.utils.EverDropWifiDirectManager.isAppInForeground = false
+                            }
+                            else -> {}
                         }
                     }
                 lifecycleOwner.lifecycle.addObserver(observer)
+                if (safeSettings.enableReceiving) {
+                    com.sameerasw.medrop.utils.EverDropWifiDirectManager.startDiscoverableReceiver(context)
+                }
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
                 }
@@ -171,11 +199,8 @@ class MainActivity : AppCompatActivity() {
 
             remember(context) { viewModel.check(context) }
 
-            val isPitchBlackThemeEnabled by viewModel.isPitchBlackThemeEnabled
-            val isBlurEnabled by viewModel.isBlurEnabled
-            val hasContactsPerm by viewModel.hasContactsPermission
-            val settings by viewModel.meDropSettings
-            val safeSettings = settings ?: MeDropSettings()
+            val incomingWifiRequest by com.sameerasw.medrop.utils.EverDropWifiDirectManager.incomingRequest.collectAsState()
+            val wifiTransferProgress by com.sameerasw.medrop.utils.EverDropWifiDirectManager.transferProgress.collectAsState()
 
             val activeShareType by com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.collectAsState()
             var receivedItem by remember { mutableStateOf<com.sameerasw.medrop.domain.model.EverDropItem?>(null) }
@@ -217,6 +242,14 @@ class MainActivity : AppCompatActivity() {
                     }
                     is EverDropItem.Contact -> {
                         receivedItem = item
+                    }
+                    is EverDropItem.P2pHandover -> {
+                        Toast.makeText(
+                            context,
+                            "NFC Handover: ${item.deviceName} sharing ${item.payloadName} via Wi-Fi Direct",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        com.sameerasw.medrop.utils.EverDropWifiDirectManager.startDiscoverableReceiver(context)
                     }
                 }
             }
@@ -369,7 +402,6 @@ class MainActivity : AppCompatActivity() {
                 onDispose {
                     lifecycleOwner.lifecycle.removeObserver(observer)
                     orientationDetector.stop()
-                    com.sameerasw.medrop.utils.EverDropWifiDirectManager.destroy(context)
                     if (activity != null) {
                         com.sameerasw.medrop.utils.MeDropNfcManager.disableReaderMode(activity)
                         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
@@ -390,7 +422,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // Automatically revert to beaming contact card after sharing file or text completes
+            // Automatically clear staged share after sharing file or text completes
             LaunchedEffect(Unit) {
                 com.sameerasw.medrop.services.MeDropHceService.onTransferCompleted.collect {
                     val currentType = com.sameerasw.medrop.utils.EverDropNfcShareManager.activeShareType.value
@@ -398,9 +430,24 @@ class MainActivity : AppCompatActivity() {
                         currentType == com.sameerasw.medrop.utils.ShareTargetType.TEXT) {
                         viewModel.clearShareFile(context)
                         viewModel.clearShareText(context)
-                        com.sameerasw.medrop.utils.EverDropNfcShareManager.setForceShareContact(context, safeSettings)
-                        Toast.makeText(context, "Transfer complete • Beaming Contact", Toast.LENGTH_SHORT).show()
+                        com.sameerasw.medrop.utils.EverDropNfcShareManager.clearShare()
+                        Toast.makeText(context, "Transfer complete", Toast.LENGTH_SHORT).show()
                     }
+                }
+            }
+
+            // Reset Share Files and Share Text containers after Wi-Fi Direct transfer completes
+            LaunchedEffect(Unit) {
+                com.sameerasw.medrop.utils.EverDropWifiDirectManager.onSenderTransferCompleted.collect { completedType ->
+                    when (completedType) {
+                        com.sameerasw.medrop.domain.model.TransferType.FILE -> {
+                            viewModel.clearShareFile(context)
+                        }
+                        com.sameerasw.medrop.domain.model.TransferType.TEXT -> {
+                            viewModel.clearShareText(context)
+                        }
+                    }
+                    com.sameerasw.medrop.utils.EverDropNfcShareManager.clearShare()
                 }
             }
 
@@ -467,6 +514,41 @@ class MainActivity : AppCompatActivity() {
                 if (isGranted) {
                     showPermissionsSheet = false
                     contactPickerLauncher.launch(MeDropContactPickerHelper.buildPickIntent())
+                }
+            }
+
+            val requiredWifiPermissions = remember {
+                val list = mutableListOf<String>()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    list.add(Manifest.permission.POST_NOTIFICATIONS)
+                    list.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+                } else {
+                    list.add(Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+                list
+            }
+
+            val wifiPermissionsLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestMultiplePermissions()
+            ) { perms ->
+                val wifiGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    perms[Manifest.permission.NEARBY_WIFI_DEVICES] == true
+                } else {
+                    perms[Manifest.permission.ACCESS_FINE_LOCATION] == true
+                }
+                if (wifiGranted && safeSettings.enableReceiving) {
+                    com.sameerasw.medrop.utils.EverDropWifiDirectManager.startDiscoverableReceiver(context)
+                }
+            }
+
+            LaunchedEffect(safeSettings.enableReceiving) {
+                if (safeSettings.enableReceiving) {
+                    val ungranted = requiredWifiPermissions.filter {
+                        androidx.core.content.ContextCompat.checkSelfPermission(context, it) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    }
+                    if (ungranted.isNotEmpty()) {
+                        wifiPermissionsLauncher.launch(ungranted.toTypedArray())
+                    }
                 }
             }
 
@@ -650,6 +732,34 @@ class MainActivity : AppCompatActivity() {
                         else -> {
                             receivedItem = null
                         }
+                    }
+
+                    var currentIncomingRequest by remember { mutableStateOf<com.sameerasw.medrop.domain.model.IncomingTransferRequest?>(null) }
+                    LaunchedEffect(incomingWifiRequest) {
+                        if (incomingWifiRequest != null) {
+                            currentIncomingRequest = incomingWifiRequest
+                        }
+                    }
+                    LaunchedEffect(wifiTransferProgress.status) {
+                        if (wifiTransferProgress.status == com.sameerasw.medrop.domain.model.TransferProgressStatus.IDLE ||
+                            wifiTransferProgress.status == com.sameerasw.medrop.domain.model.TransferProgressStatus.CANCELLED ||
+                            wifiTransferProgress.status == com.sameerasw.medrop.domain.model.TransferProgressStatus.FAILED) {
+                            currentIncomingRequest = null
+                        }
+                    }
+
+                    val activeReq = currentIncomingRequest
+                    if (activeReq != null) {
+                        com.sameerasw.medrop.ui.activities.IncomingTransferDialog(
+                            initialName = activeReq.name,
+                            initialSize = activeReq.size,
+                            initialType = activeReq.type,
+                            initialSender = activeReq.senderName,
+                            onDismiss = {
+                                currentIncomingRequest = null
+                                com.sameerasw.medrop.utils.EverDropWifiDirectManager.resetTransferState()
+                            }
+                        )
                     }
                 }
             }

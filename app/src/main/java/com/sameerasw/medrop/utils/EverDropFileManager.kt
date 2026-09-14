@@ -15,6 +15,100 @@ object EverDropFileManager {
     const val FOLDER_NAME = "Ever Share"
 
     /**
+     * Saves a local File directly into the public Downloads/Ever Share folder using streams.
+     * Prevents OutOfMemoryError on large files.
+     */
+    fun saveFileToEverShare(
+        context: Context,
+        fileName: String,
+        mimeType: String?,
+        sourceFile: File
+    ): Uri? {
+        val originalName = fileName.ifBlank { "received_file" }
+        val cleanName = originalName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+        val effectiveMime = if (mimeType.isNullOrBlank() || mimeType == "*/*") {
+            val ext = MimeTypeMap.getFileExtensionFromUrl(cleanName)
+            if (!ext.isNullOrBlank()) {
+                MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext.lowercase()) ?: "application/octet-stream"
+            } else {
+                "application/octet-stream"
+            }
+        } else {
+            mimeType
+        }
+
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                val resolver = context.contentResolver
+                val contentValues = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, cleanName)
+                    put(MediaStore.Downloads.MIME_TYPE, effectiveMime)
+                    put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/$FOLDER_NAME/")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+
+                val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                val itemUri = resolver.insert(collection, contentValues)
+                if (itemUri != null) {
+                    resolver.openOutputStream(itemUri)?.use { outStream ->
+                        sourceFile.inputStream().use { inStream ->
+                            inStream.copyTo(outStream)
+                        }
+                        outStream.flush()
+                    }
+                    contentValues.clear()
+                    contentValues.put(MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(itemUri, contentValues, null, null)
+                    itemUri
+                } else {
+                    null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        } else {
+            try {
+                @Suppress("DEPRECATION")
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                val everShareFolder = File(downloadsDir, FOLDER_NAME)
+                if (!everShareFolder.exists()) {
+                    everShareFolder.mkdirs()
+                }
+
+                var targetFile = File(everShareFolder, cleanName)
+                if (targetFile.exists()) {
+                    val dotIdx = cleanName.lastIndexOf('.')
+                    val base = if (dotIdx != -1) cleanName.substring(0, dotIdx) else cleanName
+                    val ext = if (dotIdx != -1) cleanName.substring(dotIdx) else ""
+                    var count = 1
+                    while (targetFile.exists()) {
+                        targetFile = File(everShareFolder, "$base ($count)$ext")
+                        count++
+                    }
+                }
+
+                sourceFile.inputStream().use { inStream ->
+                    targetFile.outputStream().use { outStream ->
+                        inStream.copyTo(outStream)
+                    }
+                }
+                MediaScannerConnection.scanFile(
+                    context,
+                    arrayOf(targetFile.absolutePath),
+                    arrayOf(effectiveMime),
+                    null
+                )
+                Uri.fromFile(targetFile)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                null
+            }
+        }
+    }
+
+    /**
      * Saves file bytes directly into the public Downloads/Ever Share folder.
      * On Android 10+ (API 29+), uses MediaStore.Downloads with RELATIVE_PATH.
      * On older Android versions, creates the folder under Environment.getExternalStoragePublicDirectory.

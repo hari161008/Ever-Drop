@@ -85,6 +85,9 @@ object EverDropNfcShareManager {
                 }
             } catch (_: Exception) {}
 
+            val myAddress = EverDropWifiDirectManager.thisDeviceAddress.value
+            val myName = EverDropWifiDirectManager.thisDeviceName.value
+
             val json = JSONObject().apply {
                 put("name", name)
                 put("mimeType", mimeType)
@@ -92,10 +95,19 @@ object EverDropNfcShareManager {
                 if (base64Data != null) {
                     put("data", base64Data)
                 }
+                if (myAddress.isNotBlank()) {
+                    put("address", myAddress)
+                    put("deviceName", myName)
+                    put("type", "FILE")
+                }
             }.toString()
 
             stagedFilePayloadJson = json
-            MeDropHceService.prepareFile(json)
+            if (base64Data != null) {
+                MeDropHceService.prepareFile(json)
+            } else {
+                MeDropHceService.prepareP2pHandover(json)
+            }
         }
     }
 
@@ -164,7 +176,28 @@ object EverDropNfcShareManager {
         stagedFilePayloadJson = null
         stagedTextPayload = null
         _activeShareType.value = ShareTargetType.NONE
-        shareContact(context, settings)
+        val repo = MeDropRepository(context)
+        val loadedSettings = settings ?: run {
+            val json = repo.getMeDropSettingsJson()
+            if (json != null) {
+                try {
+                    Gson().fromJson(json, MeDropSettings::class.java)
+                } catch (_: Exception) { null }
+            } else null
+        }
+
+        if (loadedSettings != null) {
+            val updatedSettings = loadedSettings.copy(
+                activeProfileType = com.sameerasw.medrop.domain.model.MeDropProfileType.CONTACT,
+                contactProfile = loadedSettings.contactProfile.copy(enabled = true)
+            )
+            try {
+                repo.setMeDropSettingsJson(Gson().toJson(updatedSettings))
+            } catch (_: Exception) {}
+            shareContact(context, updatedSettings)
+        } else {
+            shareContact(context, null)
+        }
     }
 
     /**

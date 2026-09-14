@@ -71,6 +71,10 @@ import com.sameerasw.medrop.viewmodels.MeDropViewModel
 import com.sameerasw.medrop.domain.model.TransferType
 import com.sameerasw.medrop.ui.sheets.EverDropQuickShareSheet
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.SuggestionChip
+import com.sameerasw.medrop.utils.EverDropWifiDirectManager
 import java.util.Locale
 
 /**
@@ -95,6 +99,7 @@ fun EverDropShareHubUI(
     val bringIntoViewRequester = remember { BringIntoViewRequester() }
 
     val activeShareType by EverDropNfcShareManager.activeShareType.collectAsState()
+    val peers by EverDropWifiDirectManager.discoveredPeers.collectAsState()
 
     // Quick Share sheet state
     val quickShareSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -319,6 +324,52 @@ fun EverDropShareHubUI(
                             Text(stringResource(R.string.share_file_change))
                         }
                     }
+
+                    if (peers.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "Nearby Devices • Tap to Send via Wi-Fi Direct (No Router)",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(peers, key = { it.deviceAddress }) { peer ->
+                                    SuggestionChip(
+                                        onClick = {
+                                            HapticUtil.performHeavyHaptic(view)
+                                            quickShareType = TransferType.FILE
+                                            showQuickShareSheet = true
+                                            EverDropWifiDirectManager.sendContent(
+                                                context = context,
+                                                peer = peer,
+                                                type = TransferType.FILE,
+                                                fileUri = selectedFileUri,
+                                                fileName = selectedFileName,
+                                                fileSize = selectedFileRawBytes,
+                                                mimeType = selectedFileMimeType ?: "*/*"
+                                            )
+                                        },
+                                        label = { Text(peer.deviceName, maxLines = 1) },
+                                        icon = {
+                                            Icon(
+                                                painter = painterResource(R.drawable.rounded_devices_24),
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp),
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 } else {
                     FilledTonalButton(
                         onClick = {
@@ -518,6 +569,249 @@ fun EverDropShareHubUI(
                         shape = MaterialTheme.shapes.large
                     ) {
                         Text(stringResource(R.string.share_text_copy))
+                    }
+                }
+
+                if (peers.isNotEmpty() && shareText.isNotBlank()) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "Nearby Devices • Tap to Send via Wi-Fi Direct (No Router)",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(peers, key = { it.deviceAddress }) { peer ->
+                                SuggestionChip(
+                                    onClick = {
+                                        HapticUtil.performHeavyHaptic(view)
+                                        quickShareType = TransferType.TEXT
+                                        showQuickShareSheet = true
+                                        EverDropWifiDirectManager.sendContent(
+                                            context = context,
+                                            peer = peer,
+                                            type = TransferType.TEXT,
+                                            textPayload = shareText
+                                        )
+                                    },
+                                    label = { Text(peer.deviceName, maxLines = 1) },
+                                    icon = {
+                                        Icon(
+                                            painter = painterResource(R.drawable.rounded_devices_24),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Contact Card Beaming ---
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceBright,
+            ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Header row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.secondaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.rounded_person_24),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.share_contact_card_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = stringResource(R.string.share_contact_card_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                val meDropSettings by viewModel.meDropSettings
+                val contact = meDropSettings?.contact
+                val isOverridden = activeShareType == ShareTargetType.FILE || activeShareType == ShareTargetType.TEXT
+
+                // NFC Status Indicator Chip
+                if (isOverridden) {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                text = stringResource(R.string.share_contact_priority_notice),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.rounded_remove_24),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+                            labelColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        border = null
+                    )
+                } else {
+                    AssistChip(
+                        onClick = {},
+                        label = {
+                            Text(
+                                text = stringResource(R.string.share_contact_beam_active),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                painter = painterResource(R.drawable.rounded_contactless_24),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                            labelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        border = null
+                    )
+                }
+
+                // Profile display & actions
+                if (contact != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = contact.displayName.ifBlank { "My Contact Card" },
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val phone = contact.getSafePhones().firstOrNull()
+                            val email = contact.getSafeEmails().firstOrNull()
+                            val subtitle = phone ?: email ?: "Profile configured"
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                HapticUtil.performVirtualKeyHaptic(view)
+                                val intent = Intent(context, com.sameerasw.medrop.ui.activities.SettingsActivity::class.java)
+                                context.startActivity(intent)
+                            }
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.rounded_settings_24),
+                                contentDescription = "Edit Profile",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    if (isOverridden) {
+                        OutlinedButton(
+                            onClick = {
+                                HapticUtil.performHeavyHaptic(view)
+                                viewModel.clearShareFile(context)
+                                viewModel.clearShareText(context)
+                                Toast.makeText(context, "Contact card set as active beam", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MaterialTheme.shapes.large
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.rounded_check_24),
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Beam Contact Now (Clear File & Text)")
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = stringResource(R.string.share_contact_not_selected),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = {
+                                HapticUtil.performVirtualKeyHaptic(view)
+                                val intent = Intent(context, com.sameerasw.medrop.ui.activities.SettingsActivity::class.java)
+                                context.startActivity(intent)
+                            },
+                            shape = MaterialTheme.shapes.large
+                        ) {
+                            Text("Set Up")
+                        }
                     }
                 }
             }

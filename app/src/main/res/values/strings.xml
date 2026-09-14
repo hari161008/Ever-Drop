@@ -180,4 +180,13 @@
     <string name="receive_file_saved">Saved to Downloads/Ever Share</string>
     <string name="receive_text_copied">Text copied to clipboard</string>
     <string name="action_open_file">Open File</string>
+    <string name="transfer_action_receive">Receive</string>
+    <string name="transfer_action_cancel">Cancel</string>
+    <string name="transfer_waiting_confirmation">Waiting for recipient to accept…</string>
+    <string name="transfer_wants_to_share">%1$s wants to share</string>
+    <string name="share_contact_card_title">Share Contact Profile</string>
+    <string name="share_contact_card_desc">Beam your digital business card or personal contact via NFC</string>
+    <string name="share_contact_beam_active">NFC Active • Beaming Contact</string>
+    <string name="share_contact_not_selected">No contact selected to beam</string>
+    <string name="share_contact_priority_notice">When files or text are selected, they take priority over your contact card</string>
 </resources>

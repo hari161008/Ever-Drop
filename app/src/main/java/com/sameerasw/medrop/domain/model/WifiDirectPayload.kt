@@ -33,6 +33,7 @@ enum class TransferProgressStatus {
     IDLE,
     CONNECTING,
     NEGOTIATING,
+    WAITING_CONFIRMATION,
     SENDING,
     RECEIVING,
     COMPLETED,
@@ -48,6 +49,7 @@ data class TransferProgress(
     val message: String? = null,
     val payloadType: TransferType? = null,
     val payloadName: String? = null,
+    val senderName: String? = null,
     val receivedText: String? = null,
     val receivedFileUri: Uri? = null
 )
@@ -56,4 +58,13 @@ data class WifiDirectGroupInfo(
     val networkName: String = "",
     val passphrase: String = "",
     val isGroupOwner: Boolean = false
+)
+
+data class IncomingTransferRequest(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val type: TransferType,
+    val name: String,
+    val size: Long,
+    val mimeType: String,
+    val senderName: String
 )

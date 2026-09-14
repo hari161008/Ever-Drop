@@ -312,8 +312,10 @@ fun EverDropQuickShareSheet(
             AnimatedVisibility(
                 visible = transferProgress.status == TransferProgressStatus.CONNECTING ||
                         transferProgress.status == TransferProgressStatus.NEGOTIATING ||
+                        transferProgress.status == TransferProgressStatus.WAITING_CONFIRMATION ||
                         transferProgress.status == TransferProgressStatus.SENDING ||
                         transferProgress.status == TransferProgressStatus.COMPLETED ||
+                        transferProgress.status == TransferProgressStatus.CANCELLED ||
                         transferProgress.status == TransferProgressStatus.FAILED
             ) {
                 Card(
@@ -341,7 +343,7 @@ fun EverDropQuickShareSheet(
                         ) {
                             val statusIcon = when (transferProgress.status) {
                                 TransferProgressStatus.COMPLETED -> R.drawable.rounded_check_24
-                                TransferProgressStatus.FAILED -> R.drawable.rounded_remove_24
+                                TransferProgressStatus.FAILED, TransferProgressStatus.CANCELLED -> R.drawable.rounded_remove_24
                                 else -> R.drawable.rounded_share_24
                             }
                             Icon(
@@ -359,9 +361,10 @@ fun EverDropQuickShareSheet(
 
                         if (transferProgress.status == TransferProgressStatus.SENDING ||
                             transferProgress.status == TransferProgressStatus.CONNECTING ||
-                            transferProgress.status == TransferProgressStatus.NEGOTIATING) {
+                            transferProgress.status == TransferProgressStatus.NEGOTIATING ||
+                            transferProgress.status == TransferProgressStatus.WAITING_CONFIRMATION) {
                             LinearProgressIndicator(
-                                progress = { transferProgress.progress },
+                                progress = { if (transferProgress.status == TransferProgressStatus.WAITING_CONFIRMATION) 0f else transferProgress.progress },
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(6.dp)
